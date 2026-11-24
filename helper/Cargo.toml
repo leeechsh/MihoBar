@@ -1,0 +1,25 @@
+[package]
+name = "mihobar-helper"
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0-only"
+publish = false
+description = "Mihobar's privileged helper: sets the macOS system proxy for Mihobar over XPC (a port of ClashBar's ProxyHelper)."
+
+# Built on its own (it runs as root, apart from the app).
+[workspace]
+
+[[bin]]
+name = "mihobar-helper"
+path = "src/main.rs"
+
+[dependencies]
+block2 = "0.6"
+objc2-core-foundation = { version = "0.3", features = ["CFString", "CFDictionary", "CFNumber", "CFArray", "CFBase"] }
+objc2-system-configuration = { version = "0.3", default-features = false, features = ["std", "SCPreferences", "SCNetworkConfiguration", "SCSchemaDefinitions", "bitflags"] }
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true

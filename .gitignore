@@ -1,0 +1,5 @@
+.nsh/
+target/
+.DS_Store
+# The mihomo core: downloaded by scripts/fetch-mihomo.sh (package.sh runs it).
+assets/bin/

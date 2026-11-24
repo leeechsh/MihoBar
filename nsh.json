@@ -1,0 +1,31 @@
+{
+  "name": "Mihobar",
+  "id": "dev.mihobar.app",
+  "version": "0.1.0",
+  "build": 1,
+  "rust": ".",
+  "root": "App",
+  "appearance": "system",
+  "window": {
+    "title": "Mihobar",
+    "defaultSize": {
+      "width": 360,
+      "height": 560
+    },
+    "defaultVisible": false,
+    "resizable": false,
+    "minimizable": false,
+    "maximizable": false,
+    "closeOnPress": false,
+    "frame": "none",
+    "level": "floating",
+    "workspaces": "all",
+    "backdrop": "popover",
+    "shadow": true,
+    "taskbar": false,
+    "movable": false
+  },
+  "macos": {
+    "activationPolicy": "accessory"
+  }
+}
