@@ -10,8 +10,8 @@ strings and default config. Like ClashBar, it is licensed under the
 
 ## Install
 
-Download `MihoBar-<version>-arm64.dmg` (Apple silicon) or
-`MihoBar-<version>-x86_64.dmg` (Intel) from
+Download `MihoBar-<version>-macos-arm64.dmg` (Apple silicon) or
+`MihoBar-<version>-macos-x86_64.dmg` (Intel) from
 [Releases](../../releases/latest), open it and drag MihoBar to Applications
 (run it from there: the helper installs only from `/Applications`). MihoBar
 is not signed with an Apple Developer ID yet, so macOS blocks its first
@@ -28,7 +28,8 @@ xattr -dr com.apple.quarantine /Applications/MihoBar.app
 silicon (`macos-15`) and Intel (`macos-15-intel`), with NSH 0.7.0 and
 the mihomo core for each (the repository variable `MIHOMO_VERSION` pins
 one; the latest otherwise), and uploads a `.dmg`, a `.zip` and their
-SHA-256 sums for each:
+SHA-256 sums for each, and `latest.json` (signed with the `NSH_UPDATER_KEY`
+secret), from which installed copies update themselves (Settings → Updates):
 
 ```bash
 git tag v0.2.0 && git push origin v0.2.0   # release 0.2.0 (the tag's version goes into the bundle)

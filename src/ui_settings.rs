@@ -203,12 +203,18 @@ pub fn settings_tab(m: Model) -> impl IntoElement {
                 &m,
                 icons::book(),
                 "ui.settings.language",
-                &[AppLanguage::ZhHans, AppLanguage::En],
+                &[AppLanguage::System, AppLanguage::ZhHans, AppLanguage::En],
                 {
                     let m = m.clone();
                     move || m.settings.with(|s| s.ui_language)
                 },
-                |m, l| m.tr(if l == AppLanguage::ZhHans { "ui.language.zh_hans" } else { "ui.language.en" }),
+                |m, l| {
+                    m.tr(match l {
+                        AppLanguage::System => "ui.language.system",
+                        AppLanguage::ZhHans => "ui.language.zh_hans",
+                        AppLanguage::En => "ui.language.en",
+                    })
+                },
                 {
                     let m = m.clone();
                     move |l| m.settings.update(|s| s.ui_language = l)
@@ -237,7 +243,141 @@ pub fn settings_tab(m: Model) -> impl IntoElement {
         .gap(px(style::SPACE6))
         .child(feedback_banner(m.clone()))
         .child(basic.child(log_level_row(&m)).child(exceptions_section(m.clone())))
-        .child(core_sections(m))
+        .child(core_sections(m.clone()))
+        .child(updates_section(m))
+}
+
+/// A small push button at a row's end.
+fn row_button(label: impl Fn() -> String + 'static, enabled: impl Fn() -> bool + 'static, on_press: impl Fn() + 'static) -> impl IntoElement {
+    let enabled = std::rc::Rc::new(enabled);
+    let (e1, e2) = (enabled.clone(), enabled.clone());
+    view()
+        .h(px(22.0))
+        .px(px(10.0))
+        .justify_center()
+        .rounded(px(style::CONTROL_RADIUS))
+        .bg(style::elevated())
+        .border_1()
+        .border_color(style::card_border())
+        .shadow_xs()
+        .hover(|s| s.bg(style::control_track()))
+        .opacity(move || if e1() { 1.0_f32 } else { 0.45_f32 })
+        .on_press(move || {
+            if e2() {
+                on_press();
+            }
+        })
+        .child(text(label).text_size(px(font::CALLOUT)).font_weight(FontWeight::MEDIUM).text_color(style::primary_label()))
+}
+
+/// A row with a value and a button at its end.
+fn value_row(icon: String, title: impl Fn() -> String + 'static, value: impl Fn() -> String + 'static, button: impl IntoElement) -> impl IntoElement {
+    view()
+        .flex_row()
+        .items_center()
+        .gap(px(style::SPACE6))
+        .px(px(style::SPACE6))
+        .min_h(px(34.0))
+        .child(row_label(icon, title))
+        .child(view().flex_1())
+        .child(text(value).text_size(px(font::CALLOUT)).tabular_nums().text_color(style::secondary_label()))
+        .child(button)
+}
+
+/// Updates: MihoBar's (NSH's updater, from GitHub Releases) and the core's
+/// (mihomo's `/upgrade`), each checked automatically or by hand.
+fn updates_section(m: Model) -> impl IntoElement {
+    let core_value = {
+        let m = m.clone();
+        move || {
+            let current = m.version.get();
+            let current = if current.trim().is_empty() || current == "--" { "--".to_owned() } else { current };
+            if m.core_update_available() {
+                let latest = m.core_latest.get().unwrap_or_default();
+                m.tr_args("ui.updates.core_newer", &[&current, &latest])
+            } else {
+                current
+            }
+        }
+    };
+    let core_button = {
+        let (label_m, enabled_m, press_m) = (m.clone(), m.clone(), m.clone());
+        row_button(
+            move || {
+                if label_m.core_upgrade.get() == TaskState::Running {
+                    label_m.tr("ui.footer.core_upgrade.running")
+                } else if label_m.core_update_available() {
+                    label_m.tr("ui.updates.core_install")
+                } else {
+                    label_m.tr("ui.updates.check")
+                }
+            },
+            move || enabled_m.core_upgrade.get() != TaskState::Running,
+            move || {
+                let m = press_m.clone();
+                run_root(async move {
+                    if m.core_update_available() {
+                        if m.is_live_untracked() {
+                            m.upgrade_core().await;
+                        }
+                    } else {
+                        m.check_core_update(false).await;
+                    }
+                });
+            },
+        )
+    };
+    let app_button = {
+        let (label_m, press_m) = (m.clone(), m.clone());
+        row_button(move || label_m.tr("ui.updates.check"), || true, move || press_m.check_app_update(true))
+    };
+    card()
+        .child(card_header(icons::arrow_down_circle_line(), {
+            let m = m.clone();
+            move || m.tr("ui.section.updates")
+        }))
+        .child(value_row(icons::arrow_down_circle_line(), || "MihoBar".to_owned(), || format!("v{}", crate::updates::app_version()), app_button))
+        .child(toggle_row(
+            icons::arrows_circlepath(),
+            {
+                let m = m.clone();
+                move || m.tr("ui.updates.auto_check")
+            },
+            {
+                let m = m.clone();
+                move || m.settings.with(|s| s.auto_check_updates)
+            },
+            || false,
+            {
+                let m = m.clone();
+                move |on| m.settings.update(|s| s.auto_check_updates = on)
+            },
+        ))
+        .child(value_row(
+            icons::cpu(),
+            {
+                let m = m.clone();
+                move || m.tr("ui.updates.core")
+            },
+            core_value,
+            core_button,
+        ))
+        .child(toggle_row(
+            icons::gears(),
+            {
+                let m = m.clone();
+                move || m.tr("ui.updates.auto_core")
+            },
+            {
+                let m = m.clone();
+                move || m.settings.with(|s| s.auto_update_core)
+            },
+            || false,
+            {
+                let m = m.clone();
+                move |on| m.settings.update(|s| s.auto_update_core = on)
+            },
+        ))
 }
 
 /// The core's settings, its ports and maintenance.

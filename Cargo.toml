@@ -26,10 +26,11 @@ tokio-tungstenite = { version = "0.28", default-features = false, features = ["c
 regex = "1"
 nsh-extra = { version = "0.7.0", default-features = false, features = ["location"] }
 
-# macOS only. Only SVG is on (the menu bar item is drawn as an SVG template);
+# macOS only. SVG (the menu bar item is drawn as an SVG template) and the
+# updater (MihoBar updates itself from GitHub Releases) are on;
 # the template's other features (shaders, editors, plots...) are left out.
 [target.'cfg(target_os = "macos")'.dependencies]
-nsh-platform-macos = { version = "0.7.0", default-features = false, features = ["svg"] }
+nsh-platform-macos = { version = "0.7.0", default-features = false, features = ["svg", "updater"] }
 # The menu bar item drawn by hand for the speed styles (ClashBar's
 # `StatusItemContentView`): AppKit, at the versions NSH links.
 objc2 = "0.6"

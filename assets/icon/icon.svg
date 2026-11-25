@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- MihoBar's app icon: the cat head of the menu bar (src/icons.rs CAT_HEAD)
+       on the header logo's indigo-to-blue tile, on the macOS icon grid
+       (an 824 pt tile in a 1024 pt canvas). Rendered to icon.png by
+       scripts/render-icon.swift. -->
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#6a63f0"/>
+      <stop offset="1" stop-color="#0a7cff"/>
+    </linearGradient>
+    <linearGradient id="gloss" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.22"/>
+      <stop offset="0.5" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="face" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#e9eeff"/>
+    </linearGradient>
+  </defs>
+  <rect x="100" y="108" width="824" height="824" rx="186" fill="#1c1f4a" opacity="0.10"/>
+  <rect x="100" y="100" width="824" height="824" rx="186" fill="url(#tile)"/>
+  <rect x="100" y="100" width="824" height="824" rx="186" fill="url(#gloss)"/>
+  <g transform="translate(152 158) scale(30)">
+    <path d="M4.2 10.2L4.8 3.4L9.3 6.9Q12 6.1 14.7 6.9L19.2 3.4L19.8 10.2Q21 12.1 21 14.2C21 18.4 17.2 21 12 21C6.8 21 3 18.4 3 14.2Q3 12.1 4.2 10.2Z" fill="url(#face)"/>
+    <ellipse cx="8.9" cy="14" rx="1.35" ry="1.6" fill="#3f55e6"/>
+    <ellipse cx="15.1" cy="14" rx="1.35" ry="1.6" fill="#3f55e6"/>
+    <path d="M11.2 17.1h1.6l-.8.9z" fill="#3f55e6" stroke="#3f55e6" stroke-width=".8" stroke-linejoin="round"/>
+  </g>
+</svg>

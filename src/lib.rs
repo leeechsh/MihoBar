@@ -31,6 +31,7 @@ pub mod ui_tabs;
 pub mod ui_zconns;
 pub mod ui_zlogs;
 pub mod ui_zrules;
+pub mod updates;
 pub mod usage;
 #[cfg(target_os = "macos")]
 pub mod wifi;
@@ -147,6 +148,10 @@ fn advanced_app(launch: crate::model::AdvancedLaunch) -> impl IntoElement {
 /// The menu bar panel's process.
 fn panel_app() -> impl IntoElement {
     let m = Model::new();
+    // Update checks run in the installed app (not in tests or dev runs).
+    if crate::model::bundled_executable().is_some() {
+        m.start_update_checks();
+    }
     // The panel is a window of its own (NSH's window model v2: the app's
     // root never shows), open while `panel_visible` holds, its views made
     // as it opens. Its ref, while open, and where it opens next.

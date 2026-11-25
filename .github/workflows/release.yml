@@ -2,6 +2,9 @@
 #   a tag v*        -> the release of that version (the latest)
 #   run by hand     -> the rolling "alpha" pre-release, from the branch run
 # Each build is signed ad hoc (no Developer ID yet): see README's Install.
+# A release also carries latest.json, signed with the NSH_UPDATER_KEY
+# secret (`nsh keygen`'s .secret; its .pub is nsh.json's updater.publicKey),
+# from which installed copies update themselves.
 name: Release
 
 on:
@@ -81,9 +84,11 @@ jobs:
 
       - name: Zip and disk image
         run: |
-          name="MihoBar-${{ steps.version.outputs.version }}-${{ matrix.arch }}"
+          # `<name>-<version>-<os>-<arch>`, as nsh update-manifest reads it;
+          # the zip holds the app alone (no __MACOSX), as the updater needs.
+          name="MihoBar-${{ steps.version.outputs.version }}-macos-${{ matrix.arch }}"
           mkdir -p dist dmg
-          ditto -c -k --sequesterRsrc --keepParent .nsh/out/MihoBar.app "dist/$name.zip"
+          ditto -c -k --norsrc --keepParent .nsh/out/MihoBar.app "dist/$name.zip"
           ditto .nsh/out/MihoBar.app dmg/MihoBar.app
           ln -s /Applications dmg/Applications
           hdiutil create -volname MihoBar -srcfolder dmg -ov -format UDZO "dist/$name.dmg"
@@ -103,10 +108,30 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
     steps:
+      - uses: actions/checkout@v4
+
       - uses: actions/download-artifact@v4
         with:
           path: dist
           merge-multiple: true
+
+      - name: Update manifest
+        if: github.ref_type == 'tag'
+        env:
+          NSH_UPDATER_KEY: ${{ secrets.NSH_UPDATER_KEY }}
+        run: |
+          if [[ -z "$NSH_UPDATER_KEY" ]]; then
+            echo "::error::the NSH_UPDATER_KEY secret is missing: installed copies cannot verify this release"
+            exit 1
+          fi
+          version="${GITHUB_REF_NAME#v}"
+          jq --arg v "$version" '.version = $v' nsh.json > nsh.json.new && mv nsh.json.new nsh.json
+          curl -fsSL https://nsh.dev/install.sh | NSH_VERSION="$NSH_VERSION" sh
+          key="$RUNNER_TEMP/updater.secret"
+          printf '%s\n' "$NSH_UPDATER_KEY" > "$key"
+          "$HOME/.local/bin/nsh" update-manifest --entry . --key "$key" -o dist dist/*.zip
+          rm -f "$key"
+          cat dist/latest.json
 
       - name: Release
         if: github.ref_type == 'tag'

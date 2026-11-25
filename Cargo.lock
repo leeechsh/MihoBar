@@ -1538,6 +1538,7 @@ dependencies = [
  "libc",
  "log",
  "nsh-macros",
+ "nsh-updater",
  "ordered-float",
  "percent-encoding",
  "resvg",

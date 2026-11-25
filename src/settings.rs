@@ -8,19 +8,43 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum StatusBarDisplayMode {
-    #[default]
     IconOnly,
+    #[default]
     IconAndSpeed,
     SpeedOnly,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum AppLanguage {
+    /// The system's: Chinese when the user prefers Chinese before English,
+    /// else English.
     #[default]
+    #[serde(rename = "system")]
+    System,
     #[serde(rename = "zh-Hans")]
     ZhHans,
     #[serde(rename = "en")]
     En,
+}
+
+impl AppLanguage {
+    /// The language the interface shows: the system's preferred languages
+    /// (NSH's `locale_settings`, tracked where it is read, so the interface
+    /// follows a change) decide for `System`.
+    pub fn resolved(self) -> AppLanguage {
+        match self {
+            AppLanguage::System => nsh_core::prelude::locale_settings()
+                .languages
+                .iter()
+                .find_map(|l| match l.language() {
+                    "zh" => Some(AppLanguage::ZhHans),
+                    "en" => Some(AppLanguage::En),
+                    _ => None,
+                })
+                .unwrap_or(AppLanguage::En),
+            other => other,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -138,6 +162,10 @@ pub struct Settings {
     /// Wi-Fi auto-switch: on, and the Wi-Fi bound to configs.
     pub ssid_strategy_enabled: bool,
     pub ssid_rules: Vec<SsidRule>,
+    /// Checks for a newer MihoBar at launch and daily (NSH's update prompt).
+    pub auto_check_updates: bool,
+    /// Installs a newer core by itself (not with TUN on).
+    pub auto_update_core: bool,
 }
 
 impl Default for Settings {
@@ -146,8 +174,8 @@ impl Default for Settings {
             selected_config: None,
             last_successful_config_path: None,
             auto_start_core: false,
-            status_bar_display_mode: StatusBarDisplayMode::IconOnly,
-            ui_language: AppLanguage::ZhHans,
+            status_bar_display_mode: StatusBarDisplayMode::IconAndSpeed,
+            ui_language: AppLanguage::System,
             appearance_mode: AppearanceMode::System,
             pinned: false,
             hide_hidden_proxy_groups: true,
@@ -164,6 +192,8 @@ impl Default for Settings {
             remote_subscriptions: Default::default(),
             ssid_strategy_enabled: false,
             ssid_rules: Vec::new(),
+            auto_check_updates: true,
+            auto_update_core: true,
         }
     }
 }

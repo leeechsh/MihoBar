@@ -379,6 +379,8 @@ pub struct Model {
     pub port_edit_generation: Signal<u64>,
     pub geo_update: Signal<crate::settings_core::TaskState>,
     pub core_upgrade: Signal<crate::settings_core::TaskState>,
+    /// The latest mihomo release's version, once checked (`updates`).
+    pub core_latest: Signal<Option<String>>,
     pub launch_at_login: Signal<bool>,
     pub system_proxy_enabled: Signal<bool>,
     pub system_proxy_display: Signal<Option<String>>,
@@ -527,6 +529,7 @@ impl Model {
             port_edit_generation: signal(0),
             geo_update: signal(Default::default()),
             core_upgrade: signal(Default::default()),
+            core_latest: signal(None),
             launch_at_login: signal(false),
             system_proxy_enabled: signal(false),
             system_proxy_display: signal(None),
@@ -548,7 +551,7 @@ impl Model {
         if !advanced {
             model.log_app(
                 "info",
-                format!("MihoBar {} started (pid {})", env!("CARGO_PKG_VERSION"), std::process::id()),
+                format!("MihoBar {} started (pid {})", crate::updates::app_version(), std::process::id()),
             );
         }
         if let Some(e) = bootstrap_error {
@@ -983,7 +986,7 @@ impl Model {
 
     /// The interface is in Chinese.
     pub fn is_zh(&self) -> bool {
-        self.settings.with_untracked(|s| s.ui_language) == AppLanguage::ZhHans
+        self.settings.with_untracked(|s| s.ui_language).resolved() == AppLanguage::ZhHans
     }
 
     /// Where usage is recorded (see `usage`).
@@ -1899,7 +1902,7 @@ fn release_free_memory() {
 
 /// This executable, when it runs from an app bundle (where the advanced
 /// window is a process of its own).
-fn bundled_executable() -> Option<PathBuf> {
+pub(crate) fn bundled_executable() -> Option<PathBuf> {
     let exe = std::env::current_exe().ok()?;
     let contents = exe.parent()?.parent()?;
     (contents.file_name()? == "Contents" && contents.parent()?.extension()? == "app").then_some(exe)

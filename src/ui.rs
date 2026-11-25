@@ -441,7 +441,7 @@ fn footer(m: Model) -> impl IntoElement {
         .child(core_upgrade_button(m.clone()))
         .child(view().flex_1())
         .child(
-            text(move || m.tr_args("ui.footer.version", &[&env!("CARGO_PKG_VERSION")]))
+            text(move || m.tr_args("ui.footer.version", &[&crate::updates::app_version()]))
                 .text_size(px(font::CAPTION))
                 .text_color(style::tertiary_label()),
         )

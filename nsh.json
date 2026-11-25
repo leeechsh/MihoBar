@@ -3,6 +3,7 @@
   "id": "dev.mihobar.app",
   "version": "0.1.0",
   "build": 1,
+  "icon": "assets/icon/icon.png",
   "rust": ".",
   "root": "App",
   "appearance": "system",
@@ -31,5 +32,9 @@
   "dataDir": "${homeDir}/Library/Application Support/mihobar",
   "application": {
     "quitMode": "explicit"
+  },
+  "updater": {
+    "github": "leeechsh/MihoBar",
+    "publicKey": "JKRFZBfMMfT5c/G1O/A4l8EeEGGmbKSL1+KQOTvm2Y8="
   }
 }

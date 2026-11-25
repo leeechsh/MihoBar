@@ -19,7 +19,7 @@ async function manage(app) {
 const stopped = (app) => app.waitUntil(() => app.count("启动内核") > 0, { timeout: 10000 });
 
 test("shows the panel's sections", async () => {
-  const app = await open(".", { platform: "macos" });
+  const app = await open(".", { platform: "macos", locale: "zh-Hans-CN" });
   const texts = app.texts();
   for (const label of ["MihoBar", "出站模式", "节点", "设置", "高级"]) {
     expect(texts).toContain(label);
@@ -32,7 +32,7 @@ test("shows the panel's sections", async () => {
 });
 
 test("switches tabs and opens the advanced window", async () => {
-  const app = await open(".", { platform: "macos" });
+  const app = await open(".", { platform: "macos", locale: "zh-Hans-CN" });
   await app.press("设置");
   await app.waitFor("基础设置");
   await app.press("节点");
@@ -45,7 +45,7 @@ test("switches tabs and opens the advanced window", async () => {
 
 test("starts, switches mode and stops the core", async () => {
   // The app talks to its core over the real loopback network.
-  const app = await open(".", { platform: "macos", network: "live" });
+  const app = await open(".", { platform: "macos", locale: "zh-Hans-CN", network: "live" });
   await app.press("启动内核 >> nth=1");
   // The footer shows the core's version once its API answers.
   await app.waitFor("MIHOMO v1.19.34", { timeout: 30000 });
@@ -64,7 +64,7 @@ test("starts, switches mode and stops the core", async () => {
 }, 60000);
 
 test("lists proxy groups and switches a node", async () => {
-  const app = await open(".", { platform: "macos", network: "live" });
+  const app = await open(".", { platform: "macos", locale: "zh-Hans-CN", network: "live" });
   await app.press("启动内核 >> nth=1");
   await app.waitFor("🧩 分组选择", { timeout: 30000 });
   expect(app.texts()).toContain("🐟 漏网之鱼");
@@ -83,7 +83,7 @@ test("lists proxy groups and switches a node", async () => {
 }, 60000);
 
 test("opens the config menu", async () => {
-  const app = await open(".", { platform: "macos" });
+  const app = await open(".", { platform: "macos", locale: "zh-Hans-CN" });
   await app.press("切换配置");
   await app.waitFor("本地配置", { timeout: 5000 });
   expect(app.texts()).toContain("重载配置文件");
@@ -94,7 +94,7 @@ test("opens the config menu", async () => {
 // pointer rests on its row, closes on another row, and gives way to a
 // group's nodes.
 test("opens the config menu on hover", async () => {
-  const app = await open(".", { platform: "macos", network: "live" });
+  const app = await open(".", { platform: "macos", locale: "zh-Hans-CN", network: "live" });
   await app.press("启动内核 >> nth=1");
   await app.waitFor("🧩 分组选择", { timeout: 30000 });
   await app.hover("切换配置");
@@ -109,7 +109,7 @@ test("opens the config menu on hover", async () => {
 }, 60000);
 
 test("toggles the groups' sorting, history and hidden groups", async () => {
-  const app = await open(".", { platform: "macos" });
+  const app = await open(".", { platform: "macos", locale: "zh-Hans-CN" });
   await app.press("节点按延迟排序");
   await app.waitFor("节点默认排序");
   await app.press("显示最近 4 次延迟");
@@ -124,7 +124,7 @@ test("toggles the groups' sorting, history and hidden groups", async () => {
 });
 
 test("lists connections", async () => {
-  const app = await open(".", { platform: "macos", network: "live" });
+  const app = await open(".", { platform: "macos", locale: "zh-Hans-CN", network: "live" });
   await app.press("启动内核 >> nth=1");
   await app.waitFor("MIHOMO v1.19.34", { timeout: 30000 });
   await manage(app);
@@ -135,21 +135,29 @@ test("lists connections", async () => {
 }, 60000);
 
 test("shows the settings and switches the language", async () => {
-  const app = await open(".", { platform: "macos" });
+  const app = await open(".", { platform: "macos", locale: "zh-Hans-CN" });
   await app.press("设置");
   for (const label of ["基础设置", "内核设置", "代理端口", "系统维护", "开机自启", "内核自启", "日志级别", "代理绕过", "允许局域网", "IPv6", "TCP 并发", "混合端口", "清理 DNS 缓存", "更新 Geo 数据库"]) {
     await app.waitFor(label);
   }
-  await app.press("简体中文");
+  // The language follows the system's (Chinese here) until one is chosen.
+  await app.press("跟随系统 >> nth=0");
   await app.chooseMenuItem("English");
   await app.waitFor("Basic Settings");
   await app.press("English");
-  await app.chooseMenuItem("简体中文");
+  await app.chooseMenuItem("Follow System");
   await app.waitFor("基础设置");
 });
 
+test("follows an English system and shows the speed in the menu bar", async () => {
+  const app = await open(".", { platform: "macos", locale: "en-US" });
+  await app.press("Setting");
+  await app.waitFor("Follow System");
+  await app.waitFor("Icon + Speed");
+});
+
 test("applies core settings and lays them over a restart", async () => {
-  const app = await open(".", { platform: "macos", network: "live" });
+  const app = await open(".", { platform: "macos", locale: "zh-Hans-CN", network: "live" });
   await app.press("启动内核 >> nth=1");
   await app.waitFor("MIHOMO v1.19.34", { timeout: 30000 });
   await app.press("固定");
@@ -175,7 +183,7 @@ test("applies core settings and lays them over a restart", async () => {
 }, 90000);
 
 test("shows the system proxy and TUN rows; the proxy needs the bundled helper", async () => {
-  const app = await open(".", { platform: "macos", network: "live" });
+  const app = await open(".", { platform: "macos", locale: "zh-Hans-CN", network: "live" });
   for (const label of ["系统代理", "TUN 模式", "system", "gvisor", "mixed", "mips"]) {
     await app.waitFor(label);
   }
@@ -190,7 +198,7 @@ test("shows the system proxy and TUN rows; the proxy needs the bundled helper", 
 }, 60000);
 
 test("edits the system proxy bypass list", async () => {
-  const app = await open(".", { platform: "macos" });
+  const app = await open(".", { platform: "macos", locale: "zh-Hans-CN" });
   await app.press("设置");
   await app.press("代理绕过");
   await app.waitFor("localhost");
@@ -205,7 +213,7 @@ test("edits the system proxy bypass list", async () => {
 // Serves the subscription the test imports: run with a web server for
 // scratch files on 127.0.0.1:8765 (see README).
 test("imports, lists and deletes a subscription", async () => {
-  const app = await open(".", { platform: "macos", network: "live" });
+  const app = await open(".", { platform: "macos", locale: "zh-Hans-CN", network: "live" });
   app.onDialog((d) => (d.buttons.includes("删除") ? "删除" : d.buttons[0] ?? null));
   await app.press("切换配置");
   await app.press("导入订阅链接");
@@ -227,7 +235,7 @@ test("imports, lists and deletes a subscription", async () => {
 }, 60000);
 
 test("shows the Wi-Fi auto-switch in the config menu", async () => {
-  const app = await open(".", { platform: "macos" });
+  const app = await open(".", { platform: "macos", locale: "zh-Hans-CN" });
   await app.press("切换配置");
   await app.waitFor("Wi-Fi 自动切换", { timeout: 5000 });
 });

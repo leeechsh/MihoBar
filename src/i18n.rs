@@ -9,11 +9,11 @@ use crate::settings::AppLanguage;
 fn table(language: AppLanguage) -> &'static HashMap<String, String> {
     static ZH: OnceLock<HashMap<String, String>> = OnceLock::new();
     static EN: OnceLock<HashMap<String, String>> = OnceLock::new();
-    match language {
+    match language.resolved() {
         AppLanguage::ZhHans => {
             ZH.get_or_init(|| serde_json::from_str(include_str!("i18n/zh-Hans.json")).unwrap_or_default())
         }
-        AppLanguage::En => EN.get_or_init(|| serde_json::from_str(include_str!("i18n/en.json")).unwrap_or_default()),
+        _ => EN.get_or_init(|| serde_json::from_str(include_str!("i18n/en.json")).unwrap_or_default()),
     }
 }
 
