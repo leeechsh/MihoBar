@@ -12,60 +12,40 @@ use crate::model::{Model, run_root};
 use crate::settings::{AppLanguage, AppearanceMode, StatusBarDisplayMode};
 use crate::settings_core::{self, Feedback, TaskState};
 use crate::style::{self, font};
+use crate::widgets;
 
 fn icon_view(src: String, size: f32, color: impl Fn() -> AdaptiveColor + 'static) -> impl IntoElement {
     image(ImageSrc::from(src)).w(px(size)).h(px(size)).tint_color(move || color())
 }
 
-/// A card's header (ClashBar's `settingsCardHeader`).
-fn card_header(icon: String, title: impl Fn() -> String + 'static) -> impl IntoElement {
+/// A card's title (System Settings' section title, inside the group).
+fn card_header(_icon: String, title: impl Fn() -> String + 'static) -> impl IntoElement {
     view()
-        .flex_row()
-        .items_center()
-        .gap(px(style::SPACE6))
-        .px(px(style::SPACE4))
-        .pt(px(style::SPACE6))
-        .pb(px(style::SPACE4))
-        .child(icon_view(icon, 11.0, style::tertiary_label))
+        .px(px(style::SPACE6))
+        .pt(px(style::SPACE4))
+        .pb(px(style::SPACE2))
         .child(
-            text(move || title().to_uppercase())
-                .text_size(px(font::BODY))
-                .font_weight(FontWeight::BOLD)
-                .text_color(style::tertiary_label()),
+            text(title)
+                .text_size(px(font::CALLOUT))
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(style::secondary_label()),
         )
 }
 
+/// A row's colored icon tile and title.
 fn row_label(icon: String, title: impl Fn() -> String + 'static) -> impl IntoElement {
+    let color = widgets::tile_color(&icon);
     view()
         .flex_row()
         .items_center()
-        .gap(px(style::SPACE6))
-        .child(view().w(px(16.0)).items_center().child(icon_view(icon, 12.0, style::secondary_label)))
+        .gap(px(10.0))
+        .child(widgets::tile_sized(icon, color, 20.0))
         .child(text(title).text_size(px(font::BODY)).text_color(style::primary_label()))
 }
 
-/// A switch (a native toggle's look).
+/// A switch (AppKit's `NSSwitch`).
 pub(crate) fn switch(on: impl Fn() -> bool + Clone + 'static, disabled: impl Fn() -> bool + Clone + 'static) -> impl IntoElement {
-    let on1 = on.clone();
-    view()
-        .w(px(28.0))
-        .h(px(16.0))
-        .rounded(px(8.0))
-        .bg(move || if on1() { style::positive() } else { style::fill(0.15) })
-        .opacity(move || if disabled() { 0.5_f32 } else { 1.0_f32 })
-        .child(
-            view()
-                .absolute()
-                .top(px(2.0))
-                .left({
-                    let on = on.clone();
-                    move || px(if on() { 14.0 } else { 2.0 })
-                })
-                .w(px(12.0))
-                .h(px(12.0))
-                .rounded(px(6.0))
-                .bg(AdaptiveColor::new(Rgba { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }, Rgba { r: 0.95, g: 0.95, b: 0.95, a: 1.0 })),
-        )
+    widgets::switch(on, disabled)
 }
 
 fn toggle_row(
@@ -79,9 +59,9 @@ fn toggle_row(
     view()
         .flex_row()
         .items_center()
-        .px(px(style::SPACE4))
-        .py(px(style::SPACE6))
-        .rounded(px(style::CORNER_RADIUS))
+        .px(px(style::SPACE6))
+        .min_h(px(34.0))
+        .rounded(px(7.0))
         .hover(|s| s.bg(style::fill(0.04)))
         .on_press(move || {
             if !d1() {
@@ -112,21 +92,12 @@ fn selection_row<T: Copy + PartialEq + 'static>(
     view()
         .flex_row()
         .items_center()
-        .px(px(style::SPACE4))
-        .py(px(style::SPACE4))
+        .px(px(style::SPACE6))
+        .min_h(px(34.0))
         .child(row_label(icon, move || title_m.tr(title_key)))
         .child(view().flex_1())
         .child(
-            view()
-                .flex_row()
-                .items_center()
-                .gap(px(style::SPACE2))
-                .px(px(style::SPACE6))
-                .py(px(style::SPACE2))
-                .rounded(px(style::CORNER_RADIUS))
-                .border_1()
-                .border_color(style::separator())
-                .hover(|s| s.bg(style::fill(0.06)))
+            widgets::popup_face(move || value_label(&value_m, value_current()))
                 .on_press(move || {
                     let selected = current();
                     let items = options
@@ -137,13 +108,7 @@ fn selection_row<T: Copy + PartialEq + 'static>(
                         })
                         .collect();
                     let _ = popup_menu(items);
-                })
-                .child(
-                    text(move || value_label(&value_m, value_current()))
-                        .text_size(px(font::CALLOUT))
-                        .text_color(style::secondary_label()),
-                )
-                .child(icon_view(icons::chevron_right(), 8.0, style::tertiary_label)),
+                }),
         )
 }
 
@@ -152,16 +117,17 @@ fn port_row(m: &Model, key: &'static str, label_key: &'static str, icon: String)
     view()
         .flex_row()
         .items_center()
+        .px(px(style::SPACE6))
+        .min_h(px(34.0))
         .child(row_label(icon, move || title_m.tr(label_key)))
         .child(view().flex_1())
         .child(
             input()
-                .w(px(90.0))
+                .w(px(84.0))
                 .h(px(22.0))
                 .px(px(style::SPACE6))
-                .rounded(px(5.0))
-                .border_1()
-                .border_color(style::separator())
+                .rounded(px(6.0))
+                .bg(style::control_track())
                 .value(move || settings_core::port_value(&value_m.core_settings(), key).to_owned())
                 .on_change(move |v: &str| edit_m.edit_port(key, v.to_owned()))
                 .placeholder(m.tr("ui.placeholder.port"))
@@ -172,29 +138,16 @@ fn port_row(m: &Model, key: &'static str, label_key: &'static str, icon: String)
 }
 
 fn action_button(label: impl Fn() -> String + 'static, icon: impl Fn() -> String + 'static, tint: impl Fn() -> AdaptiveColor + 'static, on_press: impl Fn() + 'static) -> impl IntoElement {
-    view()
-        .flex_1()
-        .flex_row()
-        .items_center()
-        .justify_center()
-        .gap(px(style::SPACE4))
-        .h(px(26.0))
-        .rounded(px(style::CORNER_RADIUS))
-        .border_1()
-        .border_color(style::separator())
-        .bg(style::fill(0.03))
-        .hover(|s| s.bg(style::fill(0.08)))
-        .on_press(on_press)
-        .child(image(move || ImageSrc::from(icon())).w(px(12.0)).h(px(12.0)).tint_color(move || tint()))
-        .child(text(label).truncate().text_size(px(font::CALLOUT)).text_color(style::primary_label()))
+    widgets::push_button(label, icon, tint, on_press)
 }
 
 fn card() -> View {
-    view().rounded(px(style::CORNER_RADIUS)).bg(style::fill(0.035)).pb(px(style::SPACE4))
+    widgets::card().pb(px(style::SPACE4))
 }
 
+/// The settings tab (ClashBar's): basic settings with the bypass list,
+/// then the core's settings, ports and maintenance.
 pub fn settings_tab(m: Model) -> impl IntoElement {
-    // Basic settings.
     let basic = {
         let (l1, l2, a1, a2, a3) = (m.clone(), m.clone(), m.clone(), m.clone(), m.clone());
         card()
@@ -279,29 +232,16 @@ pub fn settings_tab(m: Model) -> impl IntoElement {
                     move |a| m.settings.update(|s| s.appearance_mode = a)
                 },
             ))
-            .child(selection_row(
-                &m,
-                icons::text_alignleft(),
-                "ui.settings.log_level",
-                &crate::data::LOG_LEVELS,
-                {
-                    let m = m.clone();
-                    move || {
-                        let level = m.core_settings().log_level;
-                        crate::data::LOG_LEVELS.iter().copied().find(|l| *l == level).unwrap_or("info")
-                    }
-                },
-                |_, l| l.to_owned(),
-                {
-                    let m = m.clone();
-                    move |l: &'static str| {
-                        let m = m.clone();
-                        run_root(async move { m.set_core_log_level(l).await });
-                    }
-                },
-            ))
     };
+    view()
+        .gap(px(style::SPACE6))
+        .child(feedback_banner(m.clone()))
+        .child(basic.child(log_level_row(&m)).child(exceptions_section(m.clone())))
+        .child(core_sections(m))
+}
 
+/// The core's settings, its ports and maintenance.
+fn core_sections(m: Model) -> impl IntoElement {
     // Core settings.
     let core = {
         let syncing = {
@@ -333,7 +273,7 @@ pub fn settings_tab(m: Model) -> impl IntoElement {
             move || m.tr("ui.section.proxy_ports")
         }))
         .child(
-            view().gap(px(style::SPACE4)).px(px(style::SPACE4)).py(px(style::SPACE4)).children(
+            view().children(
                 settings_core::PORT_FIELDS
                     .iter()
                     .zip(port_icons)
@@ -424,9 +364,39 @@ pub fn settings_tab(m: Model) -> impl IntoElement {
             )
     };
 
-    // Feedback over the cards (ClashBar's `settingsFeedbackBanner`).
+    view().gap(px(style::SPACE6)).child(core).child(ports).child(maintenance)
+}
+/// The core's log level (a basic setting, as in ClashBar).
+fn log_level_row(m: &Model) -> impl IntoElement + use<> {
+    let m = m.clone();
+    view().child(selection_row(
+        &m,
+        icons::text_alignleft(),
+        "ui.settings.log_level",
+        &crate::data::LOG_LEVELS,
+        {
+            let m = m.clone();
+            move || {
+                let level = m.core_settings().log_level;
+                crate::data::LOG_LEVELS.iter().copied().find(|l| *l == level).unwrap_or("info")
+            }
+        },
+        |_, l| l.to_owned(),
+        {
+            let m = m.clone();
+            move |l: &'static str| {
+                let m = m.clone();
+                run_root(async move { m.set_core_log_level(l).await });
+            }
+        },
+    ))
+}
+
+
+/// Feedback over the cards (ClashBar's `settingsFeedbackBanner`).
+fn feedback_banner(m: Model) -> impl IntoElement {
     let feedback_m = m.clone();
-    let banner = when(
+    when(
         {
             let m = m.clone();
             move || m.settings_feedback.with(|f| f.is_some())
@@ -458,15 +428,7 @@ pub fn settings_tab(m: Model) -> impl IntoElement {
                     .text_color(style::primary_label()),
                 )
         },
-    );
-
-    view()
-        .gap(px(style::SPACE6))
-        .child(banner)
-        .child(basic.child(exceptions_section(m.clone())))
-        .child(core)
-        .child(ports)
-        .child(maintenance)
+    )
 }
 
 /// The system proxy's bypass list (ClashBar's exceptions editor in the
@@ -477,8 +439,10 @@ fn exceptions_section(m: Model) -> impl IntoElement {
     let header = view()
         .flex_row()
         .items_center()
-        .px(px(style::SPACE4))
-        .py(px(style::SPACE4))
+        .px(px(style::SPACE6))
+        .min_h(px(34.0))
+        .rounded(px(7.0))
+        .hover(|s| s.bg(style::fill(0.04)))
         .on_press(move || expanded.set(!expanded.get()))
         .child(row_label(icons::turn_right(), {
             let m = m.clone();
@@ -502,7 +466,8 @@ fn exceptions_section(m: Model) -> impl IntoElement {
         let add_label = add_m.clone();
         view()
             .gap(px(style::SPACE4))
-            .px(px(style::SPACE4))
+            .pl(px(style::SPACE6 + 30.0))
+            .pr(px(style::SPACE6))
             .pb(px(style::SPACE4))
             .child(text(move || hint_m.tr("ui.settings.system_proxy_exceptions_hint")).text_size(px(font::CAPTION)).text_color(style::secondary_label()))
             .child(when(
@@ -534,7 +499,7 @@ fn exceptions_section(m: Model) -> impl IntoElement {
                         .child(text(move || row.with(|(_, v)| v.clone())).flex_1().truncate().text_size(px(font::BODY)).text_color(style::primary_label()))
                         .child(
                             view()
-                                .tooltip(text({
+                                .tooltip(crate::widgets::tip({
                                     let m = m.clone();
                                     move || m.tr("ui.action.remove_exception")
                                 }))

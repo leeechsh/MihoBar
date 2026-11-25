@@ -153,7 +153,8 @@ pub enum Relative {
 
 /// How long ago `input` was (ClashBar's `relativeTime`).
 pub fn relative_time(input: Option<&str>, now: i64) -> Relative {
-    let Some(at) = input.and_then(parse_iso8601) else { return Relative::Unknown };
+    // A provider never updated reports year 1 (Go's zero time).
+    let Some(at) = input.and_then(parse_iso8601).filter(|&t| t >= 0) else { return Relative::Unknown };
     let interval = (now - at).max(0);
     if interval / 60 < 60 {
         Relative::Minutes(interval / 60)

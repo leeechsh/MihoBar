@@ -79,24 +79,92 @@ impl CoreMode {
     }
 }
 
+/// The panel's tabs: nodes and the quick settings. The rest lives in the
+/// management window ([`ManagerSection`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum RootTab {
     Proxy,
-    Rules,
-    Connections,
-    Logs,
     System,
 }
 
+/// How the advanced window's own process was started (by the panel's
+/// process, in the app bundle): the core it reads and its first section.
+/// It lives only while its window is open, so closing the window gives all
+/// of its memory back.
+#[derive(Clone, Debug)]
+pub struct AdvancedLaunch {
+    pub controller: String,
+    pub secret: Option<String>,
+    pub section: ManagerSection,
+}
+
+impl AdvancedLaunch {
+    const SECTION: &str = "MIHOBAR_ADVANCED";
+    const CONTROLLER: &str = "MIHOBAR_ADVANCED_CONTROLLER";
+    const SECRET: &str = "MIHOBAR_ADVANCED_SECRET";
+
+    /// This process is the advanced window's.
+    pub fn from_env() -> Option<Self> {
+        let section = ManagerSection::from_key(&std::env::var(Self::SECTION).ok()?)?;
+        let controller = std::env::var(Self::CONTROLLER).ok().filter(|c| !c.is_empty())?;
+        let secret = std::env::var(Self::SECRET).ok().filter(|s| !s.is_empty());
+        Some(Self { controller, secret, section })
+    }
+
+    fn command(&self, exe: &std::path::Path) -> std::process::Command {
+        let mut command = std::process::Command::new(exe);
+        command
+            .env(Self::SECTION, self.section.key())
+            .env(Self::CONTROLLER, &self.controller)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null());
+        match &self.secret {
+            Some(secret) => command.env(Self::SECRET, secret),
+            None => command.env_remove(Self::SECRET),
+        };
+        command
+    }
+}
+
+/// The advanced window's sections, each mounted only while it shows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ManagerSection {
+    Rules,
+    Connections,
+    Logs,
+}
+
+impl ManagerSection {
+    pub const ALL: [ManagerSection; 3] = [Self::Rules, Self::Connections, Self::Logs];
+
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::Rules => "rules",
+            Self::Connections => "connections",
+            Self::Logs => "logs",
+        }
+    }
+
+    pub fn from_key(key: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|s| s.key() == key)
+    }
+
+    pub fn title_key(self) -> &'static str {
+        match self {
+            Self::Rules => "ui.tab.rules",
+            Self::Connections => "ui.tab.connections",
+            Self::Logs => "ui.tab.logs",
+        }
+    }
+}
+
 impl RootTab {
-    pub const ALL: [RootTab; 5] = [RootTab::Proxy, RootTab::Rules, RootTab::Connections, RootTab::Logs, RootTab::System];
+    pub const ALL: [RootTab; 2] = [RootTab::Proxy, RootTab::System];
 
     pub fn title_key(self) -> &'static str {
         match self {
             Self::Proxy => "ui.tab.proxy",
-            Self::Rules => "ui.tab.rules",
-            Self::Connections => "ui.tab.connections",
-            Self::Logs => "ui.tab.logs",
             Self::System => "ui.tab.system",
         }
     }
@@ -129,10 +197,6 @@ pub enum SideKind {
     Configs,
     /// The form importing a subscription link.
     ImportRemote,
-    /// The remote machines (ClashBar's `RemoteMachineManagerView`).
-    Machines,
-    /// The machine editor: a machine's id, or `None` to add one.
-    MachineEditor(Option<String>),
 }
 
 /// A popover open beside the panel, and the screen `y` of the middle of
@@ -222,6 +286,12 @@ struct Services {
     mihomo_log_file: crate::data::LogFile,
     /// The level the logs stream was opened with.
     logs_stream_level: RefCell<Option<String>>,
+    /// The open management window, to bring forward.
+    pub(crate) manager_window: RefCell<Option<nsh_core::element::desktop::WindowRef>>,
+    /// This process is the advanced window's (see [`AdvancedLaunch`]).
+    advanced: bool,
+    /// The advanced window's process, started from the panel's.
+    advanced_child: RefCell<Option<std::process::Child>>,
 }
 
 #[derive(Clone)]
@@ -240,6 +310,9 @@ pub struct Model {
     pub startup_error: Signal<Option<String>>,
     pub tab: Signal<RootTab>,
     pub panel_visible: Signal<bool>,
+    /// The management window is open, showing `manager_section`.
+    pub manager_open: Signal<bool>,
+    pub manager_section: Signal<ManagerSection>,
     pub history: Signal<TrafficHistory>,
     pub connections_count: Signal<usize>,
     pub groups: Signal<Vec<crate::proxy::ProxyGroup>>,
@@ -290,13 +363,6 @@ pub struct Model {
     pub resume_after_network: Signal<bool>,
     pub current_ssid: Signal<Option<String>>,
     pub ssid_authorization: Signal<crate::wifi_types::Authorization>,
-    /// The remote machine the panel shows (`None`: this Mac).
-    pub remote: Signal<Option<crate::remote::RemoteMachine>>,
-    pub machine_statuses: Signal<HashMap<String, crate::remote::MachineStatus>>,
-    pub switching_machine: Signal<bool>,
-    /// A remote machine's settings as edited (never kept).
-    pub remote_core: Signal<Option<crate::settings::CoreSettings>>,
-    pub machine_draft: Signal<crate::remote::MachineDraft>,
     services: Rc<Services>,
 }
 
@@ -320,6 +386,17 @@ impl Model {
     /// `start()`): directories, the default config, the saved settings, the
     /// core's events, auto-start.
     pub fn new() -> Self {
+        Self::build(None)
+    }
+
+    /// The advanced window's process: no core of its own, no settings or
+    /// log files written; it reads the panel's core (see [`AdvancedLaunch`]).
+    pub fn new_advanced(launch: AdvancedLaunch) -> Self {
+        Self::build(Some(launch))
+    }
+
+    fn build(launch: Option<AdvancedLaunch>) -> Self {
+        let advanced = launch.is_some();
         ROOT_OWNER.with_borrow_mut(|o| *o = Some(Owner::current()));
         let wd = WorkingDirectory::default();
         let bootstrap_error = wd.bootstrap().err();
@@ -328,8 +405,10 @@ impl Model {
         let settings = Settings::load(&settings_path);
         let (tx, mut rx) = unbounded_channel();
         let core = CoreProcess::new(wd.clone(), bundled_core_path(), tx);
-        core.stop_stale_core();
-        crate::core::install_termination_handler(&wd.logs_dir().join("signals.log"));
+        if !advanced {
+            core.stop_stale_core();
+            crate::core::install_termination_handler(&wd.logs_dir().join("signals.log"));
+        }
         let app_log_file = crate::data::LogFile::open(wd.logs_dir().join("mihobar.log"));
         let mihomo_log_file = crate::data::LogFile::open(wd.logs_dir().join("mihomo.log"));
         let services = Rc::new(Services {
@@ -344,6 +423,9 @@ impl Model {
             app_log_file,
             mihomo_log_file,
             logs_stream_level: RefCell::new(None),
+            manager_window: RefCell::new(None),
+            advanced,
+            advanced_child: RefCell::new(None),
         });
         let model = Model {
             settings: signal(settings),
@@ -360,6 +442,8 @@ impl Model {
             startup_error: signal(None),
             tab: signal(RootTab::Proxy),
             panel_visible: signal(false),
+            manager_open: signal(false),
+            manager_section: signal(ManagerSection::Connections),
             history: signal(TrafficHistory::default()),
             connections_count: signal(0),
             groups: signal(Vec::new()),
@@ -401,17 +485,14 @@ impl Model {
             resume_after_network: signal(false),
             current_ssid: signal(None),
             ssid_authorization: signal(Default::default()),
-            remote: signal(None),
-            machine_statuses: signal(HashMap::new()),
-            switching_machine: signal(false),
-            remote_core: signal(None),
-            machine_draft: signal(Default::default()),
             services,
         };
-        model.log_app(
-            "info",
-            format!("Mihobar {} started (pid {})", env!("CARGO_PKG_VERSION"), std::process::id()),
-        );
+        if !advanced {
+            model.log_app(
+                "info",
+                format!("Mihobar {} started (pid {})", env!("CARGO_PKG_VERSION"), std::process::id()),
+            );
+        }
         if let Some(e) = bootstrap_error {
             model.log_app("error", model.tr_args("log.working_dir_init_failed", &[&e]));
         }
@@ -419,8 +500,8 @@ impl Model {
             model.log_app("error", model.tr_args("log.config.import_local.failed", &[&config::DEFAULT_CONFIG_NAME, &e]));
         }
 
-        // Settings are saved as they change.
-        {
+        // Settings are saved as they change (by the panel's process only).
+        if !advanced {
             let m = model.clone();
             effect(move || {
                 let s = m.settings.get();
@@ -440,7 +521,7 @@ impl Model {
                 });
             });
         }
-        {
+        if !advanced {
             let m = model.clone();
             run_root(async move { m.refresh_launch_at_login().await });
         }
@@ -470,13 +551,16 @@ impl Model {
                 let running = m.is_live() && m.api_ready.get();
                 let panel = m.panel_visible.get();
                 let tab = m.tab.get();
+                let section = m.manager_open.get().then(|| m.manager_section.get());
                 let speed_shown = m.settings.with(|s| s.status_bar_display_mode != crate::settings::StatusBarDisplayMode::IconOnly);
                 let level = m.log_level.get();
                 untracked(|| {
-                    m.sync_stream("traffic", running && (panel || speed_shown));
-                    m.sync_stream("memory", running && panel && tab == RootTab::Proxy);
-                    m.sync_stream("connections", running && panel && matches!(tab, RootTab::Proxy | RootTab::Connections));
-                    let logs_on = running && panel && tab == RootTab::Logs;
+                    let nodes_shown = panel && tab == RootTab::Proxy;
+                    m.sync_stream("traffic", running && !m.services.advanced && (panel || speed_shown));
+                    m.sync_stream("memory", running && nodes_shown);
+                    // The node tab shows the count; the connections section the list.
+                    m.sync_stream("connections", running && (nodes_shown || section == Some(ManagerSection::Connections)));
+                    let logs_on = running && section == Some(ManagerSection::Logs);
                     let level = crate::data::stream_log_level(&level);
                     if logs_on && *m.services.logs_stream_level.borrow() != level {
                         m.services.streams.borrow_mut().remove("logs");
@@ -503,9 +587,6 @@ impl Model {
                             RootTab::Proxy => {
                                 m.refresh_proxy_groups().await;
                             }
-                            RootTab::Rules => m.refresh_providers_and_rules().await,
-                            RootTab::Connections => m.refresh_connections().await,
-                            RootTab::Logs => {}
                             RootTab::System => {
                                 m.refresh_from_api().await;
                             }
@@ -515,27 +596,76 @@ impl Model {
             });
         }
 
-        // A hidden panel keeps the last 20 logs (ClashBar's
-        // `trimInMemoryLogsForCurrentVisibility`).
+        // What a management section shows is read again as it opens.
+        {
+            let m = model.clone();
+            effect(move || {
+                let section = m.manager_open.get().then(|| m.manager_section.get());
+                if !m.is_live() {
+                    return;
+                }
+                untracked(|| {
+                    let m = m.clone();
+                    run_root(async move {
+                        match section {
+                            Some(ManagerSection::Rules) => m.refresh_providers_and_rules().await,
+                            Some(ManagerSection::Connections) => m.refresh_connections().await,
+                            Some(ManagerSection::Logs) | None => {}
+                        }
+                    });
+                });
+            });
+        }
+
+        // Lists live only while the section that shows them is open: the
+        // connections and rules are dropped as their section goes (read
+        // again as it opens), and the logs keep their last 200 (ClashBar's
+        // `trimInMemoryLogsForCurrentVisibility`). Once the management
+        // window or the panel goes, what they held goes back to the
+        // system.
         {
             let m = model.clone();
             effect(move || {
                 let panel = m.panel_visible.get();
+                let open = m.manager_open.get();
+                let section = open.then(|| m.manager_section.get());
                 untracked(|| {
                     m.flush_mihomo_logs();
-                    let max = if panel { crate::data::MAX_LOGS_VISIBLE } else { crate::data::MAX_LOGS_HIDDEN };
+                    let max = if section == Some(ManagerSection::Logs) { crate::data::MAX_LOGS_VISIBLE } else { crate::data::MAX_LOGS_HIDDEN };
                     if m.logs.with(|l| l.len() > max) {
-                        m.logs.update(|l| l.truncate(max));
+                        m.logs.update(|l| {
+                            l.truncate(max);
+                            l.shrink_to_fit();
+                        });
+                    }
+                    if section != Some(ManagerSection::Connections) && m.connections.with(|c| !c.is_empty()) {
+                        m.connections.set(Vec::new());
+                    }
+                    if section != Some(ManagerSection::Rules) && m.rules.with(|r| !r.is_empty()) {
+                        m.rules.set(Vec::new());
+                    }
+                    if !panel || !open {
+                        let m = m.clone();
+                        run_root(async move {
+                            timer(Duration::from_secs(2)).await;
+                            if !m.panel_visible.get_untracked() || !m.manager_open.get_untracked() {
+                                release_free_memory();
+                            }
+                        });
                     }
                 });
             });
+        }
+
+        if let Some(launch) = launch {
+            model.start_advanced(launch);
+            return model;
         }
 
         model.seed_features_on_launch();
         model.start_remote_auto_update();
         model.start_network_monitoring();
         model.start_ssid_monitoring();
-        model.start_machine_checks();
         model.reload_configs();
         model.restore_selected_config();
         if let Some(path) = model.selected_config_path() {
@@ -559,6 +689,111 @@ impl Model {
         i18n::tr(self.language(), key, &[])
     }
 
+    /// The management window is open on `section`.
+    pub fn viewing(&self, section: ManagerSection) -> bool {
+        self.manager_open.get_untracked() && self.manager_section.get_untracked() == section
+    }
+
+    /// Starts the advanced window's process, or brings it forward when it
+    /// runs.
+    fn open_advanced_process(&self, exe: &std::path::Path) {
+        let mut child = self.services.advanced_child.borrow_mut();
+        if let Some(running) = child.as_mut() {
+            if matches!(running.try_wait(), Ok(None)) {
+                activate_process(running.id());
+                return;
+            }
+        }
+        let target = self.target.get_untracked();
+        let launch = AdvancedLaunch {
+            controller: target.controller,
+            secret: target.secret,
+            section: self.manager_section.get_untracked(),
+        };
+        match launch.command(exe).spawn() {
+            Ok(started) => *child = Some(started),
+            Err(e) => {
+                *child = None;
+                drop(child);
+                self.log_app("error", format!("Advanced window failed to start: {e}"));
+            }
+        }
+    }
+
+    /// Ends the advanced window's process (as the app quits).
+    fn close_advanced_process(&self) {
+        if let Some(mut child) = self.services.advanced_child.borrow_mut().take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
+
+    /// The advanced window's process: shows `launch.section`, live once
+    /// the panel's core answers.
+    fn start_advanced(&self, launch: AdvancedLaunch) {
+        self.target.set(ApiTarget { controller: launch.controller, secret: launch.secret });
+        self.manager_section.set(launch.section);
+        self.manager_open.set(true);
+        self.load_app_log_tail();
+        let m = self.clone();
+        run_root(async move {
+            loop {
+                if m.refresh_from_api().await {
+                    m.status.set(RuntimeStatus::Running);
+                    m.api_ready.set(true);
+                    break;
+                }
+                timer(Duration::from_millis(500)).await;
+            }
+        });
+    }
+
+    /// Mihobar's own last lines, from the panel's process's log file.
+    fn load_app_log_tail(&self) {
+        let path = self.services.wd.logs_dir().join("mihobar.log");
+        let Ok(text) = std::fs::read_to_string(path) else { return };
+        let lines: Vec<&str> = text.lines().collect();
+        let start = lines.len().saturating_sub(crate::data::MAX_LOGS_HIDDEN);
+        let entries: Vec<LogEntry> = lines[start..]
+            .iter()
+            .filter_map(|line| crate::data::parse_log_line(line))
+            .map(|(at, level, message)| {
+                let mut e = self.new_entry(&level, LogSource::App, message);
+                e.at = at;
+                e
+            })
+            .collect();
+        self.logs.update(|logs| {
+            for e in entries {
+                logs.push_front(e);
+            }
+        });
+    }
+
+    /// The management window as it opens (and `None` as it closes).
+    pub(crate) fn set_manager_window(&self, window: Option<nsh_core::element::desktop::WindowRef>) {
+        *self.services.manager_window.borrow_mut() = window;
+    }
+
+    /// Opens the management window (on `section`, or where it was) and
+    /// brings it forward.
+    pub fn open_manager(&self, section: Option<ManagerSection>) {
+        if let Some(section) = section {
+            self.manager_section.set(section);
+        }
+        // In the app bundle, the window is a process of its own.
+        if let Some(exe) = bundled_executable() {
+            self.side_popover.set(None);
+            self.open_advanced_process(&exe);
+            return;
+        }
+        self.manager_open.set(true);
+        self.side_popover.set(None);
+        if let Some(window) = self.services.manager_window.borrow().as_ref() {
+            window.focus();
+        }
+    }
+
     pub fn tr_args(&self, key: &str, args: &[&dyn std::fmt::Display]) -> String {
         i18n::tr(self.settings.with_untracked(|s| s.ui_language), key, args)
     }
@@ -580,7 +815,7 @@ impl Model {
         if entries.is_empty() {
             return;
         }
-        let max = if self.panel_visible.get_untracked() {
+        let max = if self.viewing(ManagerSection::Logs) {
             crate::data::MAX_LOGS_VISIBLE
         } else {
             crate::data::MAX_LOGS_HIDDEN
@@ -591,7 +826,9 @@ impl Model {
             .map(|e| (e.at, e.level.as_str(), e.message.as_str()))
             .collect();
         if !app.is_empty() {
-            self.services.app_log_file.append(&app);
+            if !self.services.advanced {
+                self.services.app_log_file.append(&app);
+            }
         }
         let core: Vec<_> = entries
             .iter()
@@ -599,7 +836,9 @@ impl Model {
             .map(|e| (e.at, e.level.as_str(), e.message.as_str()))
             .collect();
         if !core.is_empty() {
-            self.services.mihomo_log_file.append(&core);
+            if !self.services.advanced {
+                self.services.mihomo_log_file.append(&core);
+            }
         }
         self.logs.update(|logs| {
             for e in entries {
@@ -829,6 +1068,15 @@ impl Model {
 
     // --- Core lifecycle --------------------------------------------------
 
+    /// The core runs (what the panel's live data needs).
+    pub fn is_live(&self) -> bool {
+        self.status.get() == RuntimeStatus::Running
+    }
+
+    pub fn is_live_untracked(&self) -> bool {
+        self.status.get_untracked() == RuntimeStatus::Running
+    }
+
     pub fn is_running(&self) -> bool {
         self.status.get() == RuntimeStatus::Running
     }
@@ -839,7 +1087,7 @@ impl Model {
 
     /// Starts the core on the selected config (ClashBar's `startCore`).
     pub async fn start_core(&self, trigger: StartTrigger) {
-        if self.is_remote_untracked() || self.action.get_untracked() != CoreAction::Idle {
+        if self.action.get_untracked() != CoreAction::Idle {
             return;
         }
         if trigger == StartTrigger::Manual {
@@ -940,7 +1188,7 @@ impl Model {
     }
 
     async fn stop_core_inner(&self) {
-        if self.is_remote_untracked() || self.action.get_untracked() != CoreAction::Idle {
+        if self.action.get_untracked() != CoreAction::Idle {
             return;
         }
         self.action.set(CoreAction::Stopping);
@@ -960,7 +1208,7 @@ impl Model {
 
     /// Restarts the core on the selected config (ClashBar's `restartCore`).
     pub async fn restart_core(&self) {
-        if self.is_remote_untracked() || self.action.get_untracked() != CoreAction::Idle {
+        if self.action.get_untracked() != CoreAction::Idle {
             return;
         }
         self.action.set(CoreAction::Restarting);
@@ -1007,11 +1255,6 @@ impl Model {
     fn handle_core_terminated(&self, code: i32) {
         let message = self.tr_args("log.process.terminated", &[&code]);
         self.status.set(RuntimeStatus::Failed);
-        if self.is_remote_untracked() {
-            // The panel shows a remote machine: only the local state changes.
-            self.log_app("error", message);
-            return;
-        }
         self.api_status.set(ApiStatus::Failed);
         self.reset_traffic();
         self.stop_streams();
@@ -1027,6 +1270,9 @@ impl Model {
 
     /// Stops the core and quits.
     pub async fn quit(&self) {
+        // Leaves a trace of every quit (a menu press, ⌘Q, logout).
+        self.log_app("info", format!("Mihobar quitting (pid {})", std::process::id()));
+        self.close_advanced_process();
         self.prepare_quit_features().await;
         self.stop_streams();
         let core = self.services.core.clone();
@@ -1081,19 +1327,11 @@ impl Model {
             Ok(()) => {
                 self.mode.set(Some(mode));
                 let raw = mode.raw().to_owned();
-                if self.is_remote_untracked() {
-                    self.remote_core.update(|c| {
-                        if let Some(c) = c.as_mut() {
-                            c.mode = raw;
-                        }
-                    });
-                } else {
-                    self.settings.update(|s| {
-                        if let Some(c) = s.core_settings.as_mut() {
-                            c.mode = raw;
-                        }
-                    });
-                }
+                self.settings.update(|s| {
+                    if let Some(c) = s.core_settings.as_mut() {
+                        c.mode = raw;
+                    }
+                });
                 self.log_app("info", self.tr_args("log.action.success", &[&action]));
             }
             Err(e) => self.log_app("error", self.tr_args("log.action.failed", &[&action, &e])),
@@ -1209,7 +1447,8 @@ impl Model {
             if self.connections_count.get_untracked() != total {
                 self.connections_count.set(total);
             }
-            if self.connections.get_untracked() != list {
+            // The node tab needs only the count.
+            if self.viewing(ManagerSection::Connections) && self.connections.get_untracked() != list {
                 self.connections.set(list);
             }
         }
@@ -1219,7 +1458,10 @@ impl Model {
         let (handle, mut rx) = stream::open(url);
         self.services.streams.borrow_mut().insert(key, handle);
         let m = self.clone();
-        spawn(async move {
+        // Under the app root: this opens from the stream policy's effect,
+        // whose next run would cancel a task it owns (the socket stayed
+        // registered as open, so the traffic froze at 0).
+        run_root(async move {
             let mut last_logged: Option<std::time::Instant> = None;
             while let Some(event) = rx.recv().await {
                 match event {
@@ -1260,13 +1502,7 @@ impl Model {
     /// `127.0.0.1:7897`, the address the terminal command points at.
     pub fn local_proxy_target_display(&self) -> String {
         let (http, _) = self.ports.get().terminal_ports();
-        format!("{}:{http}", self.proxy_command_host())
-    }
-
-    /// The host the terminal's proxy variables use: a remote machine's,
-    /// else this Mac (ClashBar's `managedEndpointProxyCommandHost`).
-    pub fn proxy_command_host(&self) -> String {
-        self.remote.with(|r| r.as_ref().map(|r| r.host.clone())).unwrap_or_else(|| "127.0.0.1".into())
+        format!("127.0.0.1:{http}")
     }
 }
 
@@ -1358,3 +1594,33 @@ impl Model {
         self.services.wd.core_dir()
     }
 }
+
+/// Hands the pages the allocator holds free back to the system (macOS's
+/// `malloc_zone_pressure_relief` on every zone): what a hidden panel freed
+/// stops counting against the app.
+fn release_free_memory() {
+    unsafe extern "C" {
+        fn malloc_zone_pressure_relief(zone: *mut std::ffi::c_void, goal: usize) -> usize;
+    }
+    // SAFETY: a null zone means every zone; a goal of 0 means all it can.
+    unsafe { malloc_zone_pressure_relief(std::ptr::null_mut(), 0) };
+}
+
+/// This executable, when it runs from an app bundle (where the advanced
+/// window is a process of its own).
+fn bundled_executable() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let contents = exe.parent()?.parent()?;
+    (contents.file_name()? == "Contents" && contents.parent()?.extension()? == "app").then_some(exe)
+}
+
+/// Brings process `pid`'s windows forward.
+#[cfg(target_os = "macos")]
+fn activate_process(pid: u32) {
+    use objc2_app_kit::{NSApplicationActivationOptions, NSRunningApplication};
+    if let Some(app) = NSRunningApplication::runningApplicationWithProcessIdentifier(pid as i32) {
+        #[allow(deprecated)]
+        app.activateWithOptions(NSApplicationActivationOptions::ActivateAllWindows);
+    }
+}
+

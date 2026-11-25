@@ -14,33 +14,53 @@ use crate::icons;
 use crate::model::{HISTORY_MAX_POINTS, Model, SideKind, SidePopover, TrafficHistory};
 use crate::proxy::{self, ProviderDetail, ProxyGroup, latency_tone};
 use crate::style::{self, font};
+use crate::widgets;
 
 fn icon_view(src: String, size: f32, color: impl Fn() -> AdaptiveColor + 'static) -> impl IntoElement {
     image(ImageSrc::from(src)).w(px(size)).h(px(size)).tint_color(move || color())
 }
 
-/// A small icon button with a tooltip (ClashBar's `compactTopIcon`).
 fn icon_button(
     src: impl Fn() -> String + 'static,
     tone: impl Fn() -> AdaptiveColor + 'static,
     label: impl Fn() -> String + 'static,
     on_press: impl Fn() + 'static,
 ) -> impl IntoElement {
-    let label = Rc::new(label);
-    view()
-        .w(px(22.0))
-        .h(px(22.0))
-        .items_center()
-        .justify_center()
-        .rounded(px(style::CORNER_RADIUS))
-        .hover(|s| s.bg(style::fill(0.08)))
-        .tooltip(text({
-            let label = label.clone();
-            move || label()
-        }))
-        .label(move || label())
-        .on_press(on_press)
-        .child(image(move || ImageSrc::from(src())).w(px(13.0)).h(px(13.0)).tint_color(move || tone()))
+    widgets::icon_button(src, tone, label, on_press)
+}
+
+thread_local! {
+    /// The hover that may open a group's nodes (a newer one, or leaving
+    /// the row, cancels it).
+    static HOVER_OPEN: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// Opens `kind` beside the panel (or keeps it open) without toggling: a
+/// hover over a submenu's row.
+fn show_side(m: &Model, win: &WindowRef, row: ElementRef, kind: SideKind) {
+    if m.side_popover.with_untracked(|p| p.as_ref().is_some_and(|p| p.kind == kind)) {
+        return;
+    }
+    let m = m.clone();
+    let win = win.clone();
+    crate::model::run_root(async move {
+        let Some(measured) = row.measure().await else { return };
+        let top = win.state().map_or(0.0, |s| s.content_bounds.origin.y.0);
+        let mid = top + measured.page.y.0 + measured.frame.size.height.0 / 2.0;
+        m.side_popover.set(Some(SidePopover { kind, anchor_mid_y: mid }));
+    });
+}
+
+/// Closes a group's nodes when the pointer moves to the panel's other
+/// rows (a native menu closes a submenu when another item is hovered).
+fn close_nodes_on_hover(m: &Model) -> impl Fn() + 'static {
+    let m = m.clone();
+    move || {
+        HOVER_OPEN.with(|h| h.set(h.get() + 1));
+        if m.side_popover.with_untracked(|p| matches!(p, Some(SidePopover { kind: SideKind::Nodes(_), .. }))) {
+            m.side_popover.set(None);
+        }
+    }
 }
 
 /// Opens `kind` beside the panel, level with the row `row` measures.
@@ -64,9 +84,17 @@ pub(crate) fn open_side(m: &Model, win: &WindowRef, row: ElementRef, kind: SideK
 pub fn proxy_tab(m: Model, win: WindowRef) -> impl IntoElement {
     let providers_m = m.clone();
     view()
-        .gap(px(style::SPACE6))
-        .child(traffic_overview(m.clone()))
-        .child(quick_rows(m.clone(), win.clone()))
+        .gap(px(10.0))
+        .child(
+            view()
+                .gap(px(10.0))
+                .on_mouse_enter({
+                    let close = close_nodes_on_hover(&m);
+                    move |_: &MouseEvent| close()
+                })
+                .child(traffic_overview(m.clone()))
+                .child(quick_rows(m.clone(), win.clone())),
+        )
         .child(when(
             {
                 let m = m.clone();
@@ -161,61 +189,74 @@ fn sparkline(m: Model, width: f32, height: f32) -> impl IntoElement {
     .h(px(height))
 }
 
-fn corner_metric(
-    icon: String,
-    color: impl Fn() -> AdaptiveColor + 'static,
-    value: impl Fn() -> String + 'static,
-    icon_trailing: bool,
+/// A rate with its arrow, and the total under it.
+fn rate_stat(
+    arrow: String,
+    color: fn() -> AdaptiveColor,
+    rate: impl Fn() -> String + 'static,
+    total: impl Fn() -> String + 'static,
 ) -> impl IntoElement {
-    let label = text(value).text_size(px(font::BODY)).text_color(style::secondary_label()).truncate();
-    let glyph = icon_view(icon, 11.0, color);
-    let row = view().flex_row().items_center().gap(px(if icon_trailing { 1.0 } else { style::SPACE2 }));
-    if icon_trailing { row.child(label).child(glyph) } else { row.child(glyph).child(label) }
+    view()
+        .gap(px(1.0))
+        .child(
+            view()
+                .flex_row()
+                .items_center()
+                .gap(px(5.0))
+                .child(widgets::icon(arrow, 12.0, color))
+                .child(text(rate).text_size(px(font::TITLE3)).font_weight(FontWeight::SEMIBOLD).tabular_nums().text_color(style::primary_label())),
+        )
+        .child(text(total).pl(px(17.0)).text_size(px(font::CAPTION)).tabular_nums().text_color(style::secondary_label()))
+}
+
+/// A small metric chip (connections, memory).
+fn metric_chip(icon: String, color: fn() -> AdaptiveColor, value: impl Fn() -> String + 'static) -> impl IntoElement {
+    view()
+        .flex_row()
+        .items_center()
+        .gap(px(4.0))
+        .px(px(6.0))
+        .h(px(18.0))
+        .rounded(px(9.0))
+        .bg(style::control_track())
+        .child(widgets::icon(icon, 10.0, color))
+        .child(text(value).text_size(px(font::CAPTION)).font_weight(FontWeight::MEDIUM).tabular_nums().text_color(style::secondary_label()))
 }
 
 fn traffic_overview(m: Model) -> impl IntoElement {
-    const HEIGHT: f32 = 64.0;
-    let width = style::PANEL_WIDTH - style::SPACE8 * 2.0 - style::SPACE4 * 2.0;
-    let spark_m = m.clone();
-    view()
-        .h(px(HEIGHT))
-        .mt(px(style::SPACE2))
-        .child(
-            view().absolute().top(px(0.0)).left(px(style::SPACE4)).child(sparkline(spark_m.clone(), width, HEIGHT)),
-        )
+    const HEIGHT: f32 = 40.0;
+    let width = style::PANEL_WIDTH - style::SPACE8 * 2.0 - 10.0 * 2.0 - 2.0;
+    let (up_m, up_total_m, down_m, down_total_m, conn_m, mem_m) = (m.clone(), m.clone(), m.clone(), m.clone(), m.clone(), m.clone());
+    widgets::card()
+        .p(px(10.0))
+        .gap(px(style::SPACE6))
         .child(
             view()
-                .flex_1()
-                .px(px(style::SPACE4))
-                .py(px(style::SPACE2))
-                .justify_between()
+                .flex_row()
+                .items_start()
+                .gap(px(14.0))
+                .child(rate_stat(
+                    icons::arrow_up_circle(),
+                    style::info,
+                    move || format::speed(up_m.traffic.get().up),
+                    move || format::bytes_compact(up_total_m.history.with(|h| h.up_total)),
+                ))
+                .child(rate_stat(
+                    icons::arrow_down_circle(),
+                    style::positive,
+                    move || format::speed(down_m.traffic.get().down),
+                    move || format::bytes_compact(down_total_m.history.with(|h| h.down_total)),
+                ))
+                .child(view().flex_1())
                 .child(
                     view()
-                        .flex_row()
-                        .justify_between()
-                        .child(corner_metric(icons::link(), style::indigo, {
-                            let m = m.clone();
-                            move || m.connections_count.get().to_string()
-                        }, false))
-                        .child(corner_metric(icons::arrow_up_circle(), style::info, {
-                            let m = m.clone();
-                            move || format::speed_and_total(m.traffic.get().up, Some(m.history.with(|h| h.up_total)))
-                        }, true)),
-                )
-                .child(
-                    view()
-                        .flex_row()
-                        .justify_between()
-                        .child(corner_metric(icons::memorychip(), style::teal, {
-                            let m = m.clone();
-                            move || format::bytes_integer(m.memory.get())
-                        }, false))
-                        .child(corner_metric(icons::arrow_down_circle(), style::positive, {
-                            let m = m.clone();
-                            move || format::speed_and_total(m.traffic.get().down, Some(m.history.with(|h| h.down_total)))
-                        }, true)),
+                        .gap(px(4.0))
+                        .items_end()
+                        .child(metric_chip(icons::link(), style::indigo, move || conn_m.connections_count.get().to_string()))
+                        .child(metric_chip(icons::memorychip(), style::teal, move || format::bytes_integer(mem_m.memory.get()))),
                 ),
         )
+        .child(sparkline(m, width, HEIGHT))
 }
 
 // --- Quick rows --------------------------------------------------------------
@@ -229,12 +270,11 @@ fn quick_row(
     view()
         .flex_row()
         .items_center()
-        .gap(px(style::SPACE6))
-        .px(px(style::SPACE4))
-        .py(px(style::SPACE2))
-        .min_h(px(28.0))
-        .rounded(px(style::CORNER_RADIUS))
-        .child(view().w(px(18.0)).h(px(18.0)).items_center().justify_center().child(icon_view(icon, 14.0, color)))
+        .gap(px(10.0))
+        .px(px(style::SPACE6))
+        .min_h(px(36.0))
+        .rounded(px(7.0))
+        .child(widgets::tile(icon, color))
         .child(
             text(title)
                 .text_size(px(font::BODY))
@@ -245,7 +285,74 @@ fn quick_row(
         .child(trailing)
 }
 
+/// Where a card's dividers start: past the row's tile.
+const ROW_INSET: f32 = style::SPACE6 + style::TILE + 10.0;
+
+/// The outbound mode row: the current mode, and the modes in a native
+/// submenu opened beside the row (rule / global / direct).
+fn mode_row(m: Model, win: WindowRef) -> impl IntoElement {
+    let row = element_ref();
+    let (detail_m, press_m, dim_m) = (m.clone(), m.clone(), m.clone());
+    let _ = win;
+    quick_row(
+        icons::shuffle(),
+        style::indigo,
+        {
+            let m = m.clone();
+            move || m.tr("ui.quick.outbound_mode")
+        },
+        view()
+            .flex_row()
+            .items_center()
+            .gap(px(style::SPACE2))
+            .child(
+                text(move || match detail_m.mode.get() {
+                    Some(mode) => detail_m.tr(mode.title_key()),
+                    None => "--".into(),
+                })
+                .text_size(px(font::CAPTION))
+                .text_color(style::secondary_label()),
+            )
+            .child(icon_view(icons::chevron_right(), 9.0, style::tertiary_label)),
+    )
+    .element_ref(&row)
+    .hover(|s| s.bg(style::fill(0.05)))
+    .opacity(move || if dim_m.is_mode_switch_enabled() { 1.0_f32 } else { 0.5_f32 })
+    .on_press(move || {
+        let m = press_m.clone();
+        crate::model::run_root(async move {
+            use nsh_core::element::desktop::{MenuItem, popup_menu, popup_menu_at};
+            let current = m.mode.get_untracked();
+            let enabled = m.is_mode_switch_enabled();
+            let items = crate::model::CoreMode::ALL
+                .iter()
+                .map(|&mode| {
+                    let m = m.clone();
+                    MenuItem::new(m.tr(mode.title_key()))
+                        .checked(current == Some(mode))
+                        .disabled(!enabled)
+                        .on_select(move || {
+                            let m = m.clone();
+                            crate::model::run_root(async move { m.switch_mode(mode).await });
+                        })
+                })
+                .collect();
+            // Beside the row, where a submenu opens.
+            match row.measure().await {
+                Some(r) => {
+                    let at = point(px(r.page.x.0 + r.frame.size.width.0 - 6.0), px(r.page.y.0));
+                    let _ = popup_menu_at(items, at);
+                }
+                None => {
+                    let _ = popup_menu(items);
+                }
+            }
+        });
+    })
+}
+
 fn quick_rows(m: Model, win: WindowRef) -> impl IntoElement {
+    let mode_win = win.clone();
     let config_ref = element_ref();
     let config_m = m.clone();
     let switch_config = quick_row(
@@ -263,12 +370,7 @@ fn quick_rows(m: Model, win: WindowRef) -> impl IntoElement {
             .child(
                 text({
                     let m = m.clone();
-                    move || {
-                        if m.is_remote() {
-                            return m.tr("ui.machine.remote_readonly");
-                        }
-                        m.selected_config_name().unwrap_or_else(|| m.tr("ui.common.unknown"))
-                    }
+                    move || m.selected_config_name().unwrap_or_else(|| m.tr("ui.common.unknown"))
                 })
                 .truncate()
                 .text_size(px(font::CAPTION))
@@ -277,11 +379,9 @@ fn quick_rows(m: Model, win: WindowRef) -> impl IntoElement {
             .child(icon_view(icons::chevron_right(), 9.0, style::tertiary_label)),
     )
     .element_ref(&config_ref)
-    .hover(|s| s.bg(style::fill(0.06)))
+    .hover(|s| s.bg(style::fill(0.05)))
     .on_press(move || {
-        if !config_m.is_remote_untracked() {
-            open_side(&config_m, &win, config_ref, SideKind::Configs);
-        }
+        open_side(&config_m, &win, config_ref, SideKind::Configs);
     });
 
     let copy_m = m.clone();
@@ -297,17 +397,16 @@ fn quick_rows(m: Model, win: WindowRef) -> impl IntoElement {
             .flex_row()
             .items_center()
             .gap(px(style::SPACE4))
-            .p(px(style::SPACE2))
-            .rounded(px(9.0))
-            .border_1()
-            .border_color(move || if copied.get() { style::positive() } else { style::separator() })
-            .bg(move || if copied.get() { style::accent(0.0) } else { style::badge_fill() })
-            .tooltip(text({
+            .h(px(20.0))
+            .px(px(7.0))
+            .rounded(px(10.0))
+            .bg(move || if copied.get() { style::positive().opacity(0.16) } else { style::control_track() })
+            .tooltip(crate::widgets::tip({
                 let m = m.clone();
                 move || format!("{}\n{}", m.tr("ui.quick.copy_terminal"), m.local_proxy_target_display())
             }))
             .on_press(move || {
-                copy_m.copy_proxy_command(&copy_m.proxy_command_host());
+                copy_m.copy_proxy_command("127.0.0.1");
                 copied.set(true);
                 set_timeout(std::time::Duration::from_millis(1200), move || copied.set(false));
             })
@@ -325,45 +424,27 @@ fn quick_rows(m: Model, win: WindowRef) -> impl IntoElement {
                     .tint_color(move || if copied.get() { style::positive() } else { style::tertiary_label() }),
             ),
     );
-    view()
+    widgets::card()
+        .child(mode_row(m.clone(), mode_win))
+        .child(widgets::divider(ROW_INSET))
         .child(switch_config)
+        .child(widgets::divider(ROW_INSET))
         .child(system_proxy_row(m.clone()))
+        .child(widgets::divider(ROW_INSET))
         .child(tun_row(m.clone()))
+        .child(widgets::divider(ROW_INSET))
         .child(copy_terminal)
 }
 
 // --- Section headers ---------------------------------------------------------
 
 fn section_header(
-    icon: String,
+    _icon: String,
     title: impl Fn() -> String + 'static,
     count: impl Fn() -> String + 'static,
     trailing: impl IntoElement,
 ) -> impl IntoElement {
-    view()
-        .flex_row()
-        .items_center()
-        .gap(px(style::SPACE6))
-        .px(px(style::SPACE4))
-        .child(icon_view(icon, 11.0, style::tertiary_label))
-        .child(
-            text(move || title().to_uppercase())
-                .text_size(px(font::BODY))
-                .font_weight(FontWeight::BOLD)
-                .text_color(style::tertiary_label()),
-        )
-        .child(
-            text(count)
-                .text_size(px(font::CAPTION))
-                .font_weight(FontWeight::BOLD)
-                .text_color(style::secondary_label())
-                .px(px(style::SPACE4))
-                .py(px(1.0))
-                .rounded(px(7.0))
-                .bg(style::badge_fill()),
-        )
-        .child(view().flex_1())
-        .child(trailing)
+    widgets::section_title(title, Some(Rc::new(count)), trailing)
 }
 
 // --- Providers -----------------------------------------------------------------
@@ -403,7 +484,7 @@ fn providers_section(m: Model) -> impl IntoElement {
         ))
         .child(when(move || !collapsed(), move || {
             let m = rows_m.clone();
-            view().gap(px(style::SPACE2)).child(each(
+            widgets::card().child(each(
                 {
                     let m = m.clone();
                     move || m.providers.with(|p| p.iter().map(|(k, v)| (k.clone(), v.clone())).collect::<Vec<_>>())
@@ -426,16 +507,16 @@ fn provider_row(m: Model, entry: ReadSignal<(String, ProviderDetail)>) -> impl I
     let sub_m = m.clone();
     view()
         .gap(px(style::SPACE6))
-        .px(px(style::SPACE4))
+        .px(px(style::SPACE6))
         .py(px(style::SPACE6))
-        .rounded(px(style::CORNER_RADIUS))
-        .hover(|s| s.bg(style::fill(0.05)))
+        .rounded(px(7.0))
+        .hover(|s| s.bg(style::fill(0.04)))
         .child(
             view()
                 .flex_row()
                 .items_center()
-                .gap(px(style::SPACE6))
-                .child(icon_view(icons::externaldrive(), 11.0, style::teal))
+                .gap(px(10.0))
+                .child(widgets::tile(icons::externaldrive(), style::teal))
                 .child(
                     view()
                         .flex_1()
@@ -466,7 +547,7 @@ fn provider_row(m: Model, entry: ReadSignal<(String, ProviderDetail)>) -> impl I
                             Relative::Days(v) => m.tr_args("fmt.relative.days", &[&v]),
                         }
                     })
-                    .w(px(44.0))
+                    .min_w(px(44.0))
                     .text_right()
                     .text_size(px(font::CAPTION))
                     .text_color(style::tertiary_label()),
@@ -498,11 +579,11 @@ fn provider_row(m: Model, entry: ReadSignal<(String, ProviderDetail)>) -> impl I
                     _ => None,
                 }
             };
-            let bar_width = style::PANEL_WIDTH - 2.0 * style::SPACE8 - 2.0 * style::SPACE4 - 2.0 * (16.0 + style::SPACE6);
+            let bar_width = style::PANEL_WIDTH - 2.0 * style::SPACE8 - 2.0 * style::SPACE4 - 2.0 * style::SPACE6 - (style::TILE + 10.0) - (24.0 + style::SPACE6);
             view()
                 .gap(px(style::SPACE2))
-                .pl(px(16.0 + style::SPACE6))
-                .pr(px(16.0 + style::SPACE6))
+                .pl(px(style::TILE + 10.0))
+                .pr(px(24.0 + style::SPACE6))
                 .child(
                     view()
                         .flex_row()
@@ -613,6 +694,7 @@ fn groups_section(m: Model, win: WindowRef) -> impl IntoElement {
         ));
     let empty_m = m.clone();
     let rows_m = m.clone();
+    let list_m = m.clone();
     view()
         .gap(px(style::SPACE6))
         .child(section_header(
@@ -634,19 +716,26 @@ fn groups_section(m: Model, win: WindowRef) -> impl IntoElement {
             },
             move || empty_card(empty_m.tr("ui.empty.proxy_groups")),
         ))
-        .child(view().gap(px(style::SPACE2)).child(each(
+        .child(when(
+            {
+                let m = list_m.clone();
+                move || !m.visible_groups().is_empty()
+            },
+            move || {
+                let (rows_m, m, win) = (rows_m.clone(), m.clone(), win.clone());
+                widgets::card().child(each(
             move || rows_m.visible_groups(),
             |g: &ProxyGroup| g.name.clone(),
             move |group, _| group_row(m.clone(), win.clone(), group),
-        )))
+                ))
+            },
+        ))
 }
 
 pub fn empty_card(message: String) -> impl IntoElement {
-    view()
+    widgets::card()
         .items_center()
-        .py(px(14.0))
-        .rounded(px(style::CORNER_RADIUS))
-        .bg(style::fill(0.04))
+        .py(px(18.0))
         .child(text(message).text_size(px(font::CALLOUT)).text_color(style::secondary_label()))
 }
 
@@ -700,6 +789,8 @@ fn delay_badge(m: Model, samples: impl Fn() -> Vec<i64> + Clone + 'static) -> im
         )
 }
 
+const GROUP_ROW_HEIGHT: f32 = 30.0;
+
 fn group_row(m: Model, win: WindowRef, group: ReadSignal<ProxyGroup>) -> impl IntoElement {
     let row = element_ref();
     let name = move || group.with(|g| g.name.clone());
@@ -723,27 +814,62 @@ fn group_row(m: Model, win: WindowRef, group: ReadSignal<ProxyGroup>) -> impl In
         .element_ref(&row)
         .flex_row()
         .items_center()
-        .gap(px(1.0))
-        .h(px(style::COMPACT_ROW_HEIGHT + 2.0))
-        .px(px(style::SPACE4))
-        .rounded(px(style::CORNER_RADIUS))
-        .hover(|s| s.bg(style::fill(0.06)))
+        .gap(px(style::SPACE4))
+        .h(px(GROUP_ROW_HEIGHT))
+        .px(px(style::SPACE6))
+        .rounded(px(7.0))
+        .hover(|s| s.bg(style::fill(0.05)))
         .bg({
             let m = m.clone();
             move || {
                 let open = m.side_popover.with(|p| {
                     p.as_ref().is_some_and(|p| p.kind == SideKind::Nodes(name()))
                 });
-                if open { style::fill(0.08) } else { style::fill(0.0) }
+                if open { style::accent(0.13) } else { style::fill(0.0) }
             }
         })
-        .on_press(move || open_side(&press_m, &win, row, SideKind::Nodes(name())))
+        // A submenu: the nodes open while the pointer rests on the row
+        // (a native menu's delay), or on a press.
+        .on_mouse_enter({
+            let (m, win) = (press_m.clone(), win.clone());
+            move |e: &MouseEvent| {
+                let token = HOVER_OPEN.with(|h| {
+                    h.set(h.get() + 1);
+                    h.get()
+                });
+                // The row's middle on the screen, from the event itself
+                // (no measuring round trip): its top is the pointer's page
+                // position less its position in the row.
+                let row_top = e.page_position.y.0 - e.position.y.0;
+                let top = win.state().map_or(0.0, |s| s.content_bounds.origin.y.0);
+                let anchor_mid_y = top + row_top + GROUP_ROW_HEIGHT / 2.0;
+                let kind = SideKind::Nodes(name());
+                let open = SidePopover { kind, anchor_mid_y };
+                // A submenu already open follows the pointer at once; the
+                // first opens after a native menu's short rest.
+                let showing = m.side_popover.with_untracked(|p| matches!(p, Some(SidePopover { kind: SideKind::Nodes(_), .. })));
+                if showing {
+                    if !m.side_popover.with_untracked(|p| p.as_ref().is_some_and(|p| p.kind == open.kind)) {
+                        m.side_popover.set(Some(open));
+                    }
+                } else {
+                    let m = m.clone();
+                    set_timeout(std::time::Duration::from_millis(90), move || {
+                        if HOVER_OPEN.with(|h| h.get()) == token {
+                            m.side_popover.set(Some(open));
+                        }
+                    });
+                }
+            }
+        })
+        .on_mouse_leave(move |_: &MouseEvent| HOVER_OPEN.with(|h| h.set(h.get() + 1)))
+        .on_press(move || show_side(&press_m, &win, row, SideKind::Nodes(name())))
         .child(when(move || icon_url().is_some(), move || {
             image(move || ImageSrc::from(icon_url().unwrap_or_default())).w(px(16.0)).h(px(16.0))
         }))
         .child(
             text(name)
-                .w(px(104.0))
+                .w(px(108.0))
                 .truncate()
                 .text_size(px(font::BODY))
                 .font_weight(FontWeight::SEMIBOLD)
@@ -753,13 +879,13 @@ fn group_row(m: Model, win: WindowRef, group: ReadSignal<ProxyGroup>) -> impl In
             view().flex_1().flex_row().child(
                 text(current)
                     .truncate()
-                    .text_size(px(font::CAPTION))
+                    .text_size(px(font::SUBHEADLINE))
                     .font_weight(FontWeight::MEDIUM)
                     .text_color(style::secondary_label())
-                    .px(px(style::SPACE4))
-                    .py(px(1.0))
-                    .rounded(px(7.0))
-                    .bg(style::badge_fill()),
+                    .px(px(7.0))
+                    .py(px(2.0))
+                    .rounded(px(9.0))
+                    .bg(style::control_track()),
             ),
         )
         .child(view().w(px(64.0)).flex_row().justify_end().child(delay_badge(m.clone(), samples)))
@@ -790,10 +916,9 @@ pub fn side_height(m: &Model, kind: &SideKind) -> f32 {
         }),
         SideKind::Configs => m.configs.with_untracked(|c| c.len()) * 2 + 11,
         SideKind::ImportRemote => 12,
-        SideKind::Machines => return (130.0 + m.settings.with_untracked(|s| s.remote_machines.len()) as f32 * 70.0).min(460.0),
-        SideKind::MachineEditor(_) => return 330.0,
     };
-    (32.0 + rows as f32 * (style::COMPACT_ROW_HEIGHT + 4.0) + 12.0).min(460.0)
+    // Node rows are 26 points; the header and padding about 46.
+    (46.0 + rows as f32 * 26.0 + 8.0).min(560.0)
 }
 
 pub fn side_content(m: Model) -> impl IntoElement {
@@ -802,6 +927,7 @@ pub fn side_content(m: Model) -> impl IntoElement {
     view()
         .flex_1()
         .p(px(style::SPACE6))
+        .bg(style::menu_background())
         .child(when(
             {
                 let m = m.clone();
@@ -826,23 +952,7 @@ pub fn side_content(m: Model) -> impl IntoElement {
                 move || import_remote_form(m.clone())
             },
         ))
-        .child(when(
-            {
-                let m = m.clone();
-                move || m.side_popover.with(|p| matches!(p, Some(SidePopover { kind: SideKind::Machines, .. })))
-            },
-            {
-                let m = m.clone();
-                move || crate::ui_machines::machines_list(m.clone())
-            },
-        ))
-        .child(when(
-            {
-                let m = m.clone();
-                move || m.side_popover.with(|p| matches!(p, Some(SidePopover { kind: SideKind::MachineEditor(_), .. })))
-            },
-            move || crate::ui_machines::machine_editor(m.clone()),
-        ))
+
 }
 
 fn popover_header(title: impl Fn() -> String + 'static, count: impl Fn() -> String + 'static, trailing: impl IntoElement) -> impl IntoElement {
@@ -936,7 +1046,7 @@ fn nodes_list(m: Model) -> impl IntoElement {
                 },
             ),
         ))
-        .child(scroll().flex_1().child(view().gap(px(2.0)).child(each(
+        .child(scroll().flex_1().scrollbar(false).child(view().gap(px(2.0)).child(each(
             nodes,
             |n: &String| n.clone(),
             move |node, _| node_row(list_m.clone(), group.clone(), node),
@@ -978,14 +1088,14 @@ fn node_row(
         .flex_row()
         .items_center()
         .gap(px(1.0))
-        .h(px(style::COMPACT_ROW_HEIGHT + 2.0))
+        .h(px(26.0))
         .px(px(style::SPACE4))
-        .rounded(px(style::CORNER_RADIUS))
+        .rounded(px(7.0))
         .bg({
             let selected = selected.clone();
-            move || if selected() { style::accent(0.18) } else { style::fill(0.0) }
+            move || if selected() { style::accent(0.14) } else { style::fill(0.0) }
         })
-        .hover(|s| s.bg(style::fill(0.08)))
+        .hover(|s| s.bg(style::fill(0.05)))
         .child(
             view()
                 .flex_1()
@@ -1045,7 +1155,7 @@ fn node_row(
                 .w(px(56.0))
                 .flex_row()
                 .justify_end()
-                .tooltip(text({
+                .tooltip(crate::widgets::tip({
                     let m = m.clone();
                     move || m.tr("ui.action.test_latency")
                 }))
@@ -1502,36 +1612,37 @@ fn system_proxy_row(m: Model) -> impl IntoElement {
     view()
         .flex_row()
         .items_center()
-        .gap(px(style::SPACE6))
-        .px(px(style::SPACE4))
-        .py(px(style::SPACE2))
-        .min_h(px(28.0))
-        .rounded(px(style::CORNER_RADIUS))
+        .gap(px(10.0))
+        .px(px(style::SPACE6))
+        .min_h(px(36.0))
+        .rounded(px(7.0))
         .hover(|s| s.bg(style::fill(0.05)))
         .on_press(move || {
             // The system proxy points at this Mac's core.
-            if !press_m.proxy_syncing.get_untracked() && !press_m.is_remote_untracked() {
+            if !press_m.proxy_syncing.get_untracked() {
                 let m = press_m.clone();
                 let next = !m.system_proxy_enabled.get_untracked();
                 crate::model::run_root(async move { m.toggle_system_proxy(next).await });
             }
         })
-        .child(view().w(px(18.0)).h(px(18.0)).items_center().justify_center().child(icon_view(icons::network(), 14.0, style::info)))
+        .child(widgets::tile(icons::network(), style::info))
         .child(text(move || title_m.tr("ui.quick.system_proxy")).text_size(px(font::BODY)).font_weight(FontWeight::MEDIUM).text_color(style::primary_label()))
         .child(when(
             move || !hint_m.system_proxy_enabled.get() && hint_m.system_proxy_hint.with(|h| h.is_some()),
             move || {
                 let m = hint2_m.clone();
-                text(move || m.system_proxy_hint.get().unwrap_or_default())
-                    .flex_1()
-                    .truncate()
-                    .text_size(px(font::CAPTION))
-                    .font_weight(FontWeight::MEDIUM)
-                    .text_color(style::warning())
+                let tip_m = m.clone();
+                view().flex_1().min_w(px(0.0)).tooltip(crate::widgets::tip(move || tip_m.system_proxy_hint.get().unwrap_or_default())).child(
+                    text(move || m.system_proxy_hint.get().unwrap_or_default())
+                        .truncate()
+                        .text_size(px(font::CAPTION))
+                        .font_weight(FontWeight::MEDIUM)
+                        .text_color(style::warning()),
+                )
             },
         ))
         .child(view().flex_1())
-        .child(crate::ui_settings::switch(move || on_m.system_proxy_enabled.get(), move || dis_m.proxy_syncing.get() || dis_m.is_remote()))
+        .child(crate::ui_settings::switch(move || on_m.system_proxy_enabled.get(), move || dis_m.proxy_syncing.get()))
 }
 
 /// The TUN quick row with its stack chips (ClashBar's `tunModeQuickToggleRow`).
@@ -1539,23 +1650,21 @@ fn tun_row(m: Model) -> impl IntoElement {
     let chips: Vec<_> = crate::features::TUN_STACKS
         .iter()
         .map(|&stack| {
-            let (a1, a2, a3, en, press, tip) = (m.clone(), m.clone(), m.clone(), m.clone(), m.clone(), m.clone());
+            let (a1, a3, en, press, tip) = (m.clone(), m.clone(), m.clone(), m.clone(), m.clone());
             let active = move |m: &Model| m.tun_enabled() && m.tun_stack().as_deref() == Some(stack);
             text(stack)
                 .text_size(px(font::CAPTION))
                 .font_weight(FontWeight::MEDIUM)
                 .text_color(move || if active(&a1) { style::positive() } else { style::secondary_label() })
-                .px(px(style::SPACE4))
-                .py(px(style::SPACE2))
-                .rounded(px(8.0))
-                .border_1()
-                .border_color(move || if active(&a2) { style::positive().opacity(0.18) } else { style::separator() })
-                .bg(move || if active(&a3) { style::positive().opacity(0.18) } else { style::badge_fill() })
+                .px(px(5.0))
+                .py(px(2.0))
+                .rounded(px(5.0))
+                .bg(move || if active(&a3) { style::positive().opacity(0.18) } else { style::fill(0.0) })
                 .opacity(move || {
                     let enabled = en.is_live() && (stack != "mips" || en.is_mips_supported());
                     if enabled { 1.0_f32 } else { 0.5_f32 }
                 })
-                .tooltip(text(move || {
+                .tooltip(crate::widgets::tip(move || {
                     if stack == "mips" && !tip.is_mips_supported() {
                         tip.tr_args("app.tun.mips_requires_upgrade", &[&crate::features::MIPS_MIN_CORE])
                     } else {
@@ -1574,14 +1683,13 @@ fn tun_row(m: Model) -> impl IntoElement {
     view()
         .flex_row()
         .items_center()
-        .gap(px(style::SPACE6))
-        .px(px(style::SPACE4))
-        .py(px(style::SPACE2))
-        .min_h(px(28.0))
-        .child(view().w(px(18.0)).h(px(18.0)).items_center().justify_center().child(icon_view(icons::shield(), 14.0, style::positive)))
+        .gap(px(10.0))
+        .px(px(style::SPACE6))
+        .min_h(px(36.0))
+        .child(widgets::tile(icons::shield(), style::positive))
         .child(text(move || title_m.tr("ui.quick.tun_mode")).text_size(px(font::BODY)).font_weight(FontWeight::MEDIUM).text_color(style::primary_label()))
         .child(view().flex_1())
-        .child(view().flex_row().gap(px(style::SPACE2)).children(chips))
+        .child(view().flex_row().gap(px(1.0)).p(px(2.0)).rounded(px(7.0)).bg(style::control_track()).children(chips))
         .child(
             view()
                 .ml(px(style::SPACE4))

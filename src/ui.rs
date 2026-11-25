@@ -5,7 +5,7 @@ use nsh_core::element::ImageSrc;
 use nsh_core::prelude::*;
 
 use crate::icons;
-use crate::model::{CoreMode, Model, RootTab, RuntimeStatus, StartTrigger};
+use crate::model::{Model, RootTab, RuntimeStatus, StartTrigger};
 use crate::style::{self, font};
 
 const PROJECT_HOMEPAGE: &str = "https://github.com/Sitoi/ClashBar";
@@ -17,64 +17,153 @@ fn icon(src: String, size: f32, color: impl Fn() -> AdaptiveColor + 'static) -> 
 }
 
 pub fn panel(m: Model, win: nsh_core::element::desktop::WindowRef) -> impl IntoElement {
-    view()
-        .w(px(style::PANEL_WIDTH))
-        .flex_1()
-        .px(px(style::SPACE8))
-        .child(header(m.clone(), win.clone()))
-        .child(mode_and_tabs(m.clone()))
-        .child(when(
-            {
-                let m = m.clone();
-                move || m.tab.get() != RootTab::Rules
-            },
-            {
-                let m = m.clone();
-                move || scroll().flex_1().child(tab_content(m.clone(), win.clone()))
-            },
-        ))
-        .child(when(
-            {
-                let m = m.clone();
-                move || m.tab.get() == RootTab::Rules
-            },
-            {
-                let m = m.clone();
-                move || crate::ui_tabs::rules_tab(m.clone())
-            },
-        ))
-        .child(footer(m))
+    let column = element_ref();
+    fit_window_to_content(m.clone(), win.clone(), column.clone());
+    // The window is as tall as the panel's content; the whole panel
+    // scrolls only when that is taller than the screen, with no scroll bar.
+    scroll().flex_1().scrollbar(false).child(
+        view()
+            .element_ref(&column)
+            .w(px(style::PANEL_WIDTH))
+            .px(px(style::SPACE8))
+            .child(header(m.clone()))
+            .child(tabs(m.clone()))
+            .child(crate::widgets::entrance_on(
+                {
+                    let m = m.clone();
+                    move || m.tab.get()
+                },
+                tab_content(m.clone(), win.clone()),
+            ))
+            .child(footer(m)),
+    )
+}
+
+/// Keeps the window as tall as the panel's content, up to the bottom of
+/// the screen, resizing with macOS's own animation: at once when the tab
+/// changes, and as content comes and goes while the panel shows.
+fn fit_window_to_content(m: Model, win: nsh_core::element::desktop::WindowRef, column: ElementRef) {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static GENERATION: AtomicU64 = AtomicU64::new(0);
+    let generation = GENERATION.fetch_add(1, Ordering::Relaxed) + 1;
+    {
+        let (m, win, column) = (m.clone(), win.clone(), column.clone());
+        effect(move || {
+            let _ = m.tab.get();
+            let (win, column) = (win.clone(), column.clone());
+            untracked(|| {
+                crate::model::run_root(async move {
+                    fit_trace("tab changed");
+                    // The new tab's views lay out first (two frames).
+                    timer(std::time::Duration::from_millis(32)).await;
+                    fit_once(&win, &column).await;
+                });
+            });
+        });
+    }
+    crate::model::run_root(async move {
+        while m.panel_visible.get_untracked() && GENERATION.load(Ordering::Relaxed) == generation {
+            if !RESIZING.load(Ordering::Relaxed) {
+                fit_once(&win, &column).await;
+            }
+            timer(std::time::Duration::from_millis(250)).await;
+        }
+    });
+}
+
+/// Resizes the window to the panel's content: eased over about 180 ms
+/// in frame steps (macOS's own animated resize re-enters NSH's animation
+/// pass), at once when the user asks for less motion.
+/// Debug trace of the window fitting (MIHOBAR_FIT_TRACE=<file>).
+pub(crate) fn fit_trace(line: &str) {
+    if let Some(path) = std::env::var_os("MIHOBAR_FIT_TRACE") {
+        use std::io::Write;
+        let ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() % 100_000);
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+            let _ = writeln!(f, "{ms:>6} {line}");
+        }
+    }
+}
+
+thread_local! {
+    /// The window height this code last set: the state NSH reports lags
+    /// behind `set_bounds`, and easing from that stale height made the
+    /// panel's bottom jump back and ease again.
+    static LAST_HEIGHT: std::cell::Cell<Option<f32>> = const { std::cell::Cell::new(None) };
+}
+
+/// A resize is easing (the periodic check leaves it alone).
+static RESIZING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+async fn fit_once(win: &nsh_core::element::desktop::WindowRef, column: &ElementRef) {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static TWEEN: AtomicU64 = AtomicU64::new(0);
+    let (Some(measured), Some(state)) = (column.measure().await, win.state()) else { return };
+    let content = measured.frame.size.height.0.ceil();
+    fit_trace(&format!("measure content={content} window={} last={:?}", state.bounds.size.height.0, LAST_HEIGHT.with(|h| h.get())));
+    let bounds = state.bounds;
+    let top = bounds.origin.y.0;
+    let visible = crate::geometry::visible_frame_at(bounds.origin.x.0 + bounds.size.width.0 / 2.0);
+    let max = (visible.max_y() - top - 8.0).max(240.0);
+    let target = content.min(max);
+    let from = LAST_HEIGHT.with(|h| h.get()).unwrap_or(bounds.size.height.0);
+    let width_off = LAST_HEIGHT.with(|h| h.get()).is_none() && (bounds.size.width.0 - style::PANEL_WIDTH).abs() > 0.5;
+    if content <= 0.0 || ((target - from).abs() <= 0.5 && !width_off) {
+        return;
+    }
+    let set = |h: f32| {
+        LAST_HEIGHT.with(|last| last.set(Some(h.round())));
+        win.set_bounds(nsh_core::desktop::WindowFrame {
+            width: Some(Points(style::PANEL_WIDTH)),
+            height: Some(Points(h.round())),
+            ..Default::default()
+        });
+    };
+    let tween = TWEEN.fetch_add(1, Ordering::Relaxed) + 1;
+    if nsh_core::prelude::reduce_motion() || (target - from).abs() < 4.0 {
+        set(target);
+        return;
+    }
+    const STEPS: u32 = 11;
+    RESIZING.store(true, Ordering::Relaxed);
+    for step in 1..=STEPS {
+        if TWEEN.load(Ordering::Relaxed) != tween {
+            return; // A newer resize took over (and clears the flag).
+        }
+        let t = step as f32 / STEPS as f32;
+        let eased = 1.0 - (1.0 - t).powi(3); // ease-out cubic
+        set(from + (target - from) * eased);
+        fit_trace(&format!("  set {}", (from + (target - from) * eased).round()));
+        if step < STEPS {
+            timer(std::time::Duration::from_millis(16)).await;
+        }
+    }
+    RESIZING.store(false, Ordering::Relaxed);
 }
 
 // --- Header ------------------------------------------------------------------
 
-fn header(m: Model, win: nsh_core::element::desktop::WindowRef) -> impl IntoElement {
+fn header(m: Model) -> impl IntoElement {
+    // The app icon: a rounded square in the macOS icon shape.
     let logo = view()
         .w(px(34.0))
         .h(px(34.0))
         .items_center()
         .justify_center()
-        .rounded(px(8.0))
+        .rounded(px(9.0))
+        .bg_linear_to_b()
+        .gradient_from(style::indigo())
+        .gradient_to(style::info())
+        .shadow_sm()
         .on_press(|| {
             let _ = open_url(PROJECT_HOMEPAGE);
         })
-        .child(icon(icons::brand_logo(), 26.0, style::primary_label));
+        .child(icon(icons::brand_logo(), 20.0, style::white));
 
-    let title = view()
-        .gap(px(style::SPACE2))
-        .child(
-            text("Mihobar")
-                .text_size(px(font::TITLE3))
-                .font_weight(FontWeight::SEMIBOLD)
-                .text_color(style::primary_label()),
-        )
-        .child(
-            view()
-                .flex_row()
-                .items_center()
-                .gap(px(style::SPACE6))
-                .child(connection_control(m.clone(), win)),
-        );
+    let title = text("Mihobar")
+        .text_size(px(font::TITLE3))
+        .font_weight(FontWeight::BOLD)
+        .text_color(style::primary_label());
 
     let actions = {
         let pin_m = m.clone();
@@ -114,7 +203,7 @@ fn header(m: Model, win: nsh_core::element::desktop::WindowRef) -> impl IntoElem
                 },
                 {
                     let m = m.clone();
-                    move || m.is_processing() || m.is_remote()
+                    move || m.is_processing()
                 },
                 move || {
                     let m = restart_m.clone();
@@ -136,7 +225,7 @@ fn header(m: Model, win: nsh_core::element::desktop::WindowRef) -> impl IntoElem
                 },
                 {
                     let m = m.clone();
-                    move || m.is_processing() || m.is_remote()
+                    move || m.is_processing()
                 },
                 move || {
                     let m = toggle_m.clone();
@@ -168,8 +257,10 @@ fn header(m: Model, win: nsh_core::element::desktop::WindowRef) -> impl IntoElem
         .flex_row()
         .items_center()
         .gap(px(style::SPACE8))
-        .py(px(style::SPACE8))
-        .child(view().flex_row().items_start().gap(px(style::SPACE8)).child(logo).child(title))
+        .pt(px(10.0))
+        .pb(px(style::SPACE8))
+        .px(px(style::SPACE2))
+        .child(view().flex_row().items_center().gap(px(10.0)).child(logo).child(title))
         .child(view().flex_1())
         .child(actions)
 }
@@ -185,14 +276,17 @@ fn top_icon(
     let label = std::rc::Rc::new(label);
     let is_disabled = disabled.clone();
     view()
-        .w(px(26.0))
-        .h(px(26.0))
+        .w(px(28.0))
+        .h(px(28.0))
         .items_center()
         .justify_center()
-        .rounded(px(style::CORNER_RADIUS))
-        .hover(|s| s.bg(style::fill(0.08)))
-        .opacity(move || if disabled() { 0.6_f32 } else { 1.0_f32 })
-        .tooltip(text({
+        .rounded(px(14.0))
+        .bg(style::control_track())
+        .hover(|s| s.bg(style::fill(0.14)))
+        .transition_colors()
+        .duration(120.0)
+        .opacity(move || if disabled() { 0.45_f32 } else { 1.0_f32 })
+        .tooltip(crate::widgets::tip({
             let label = label.clone();
             move || label()
         }))
@@ -202,193 +296,82 @@ fn top_icon(
                 on_press();
             }
         })
-        .child(image(move || ImageSrc::from(src())).w(px(16.0)).h(px(16.0)).tint_color(move || tone()))
-}
-
-/// The machine the panel talks to, its controller address and state; a
-/// press opens the machine menu (ClashBar's `headerConnectionControl`).
-fn connection_control(m: Model, win: nsh_core::element::desktop::WindowRef) -> impl IntoElement {
-    let dot_m = m.clone();
-    let spin_m = m.clone();
-    let press_m = m.clone();
-    let row = element_ref();
-    view()
-        .element_ref(&row)
-        .flex_row()
-        .items_center()
-        .gap(px(style::SPACE6))
-        .px(px(style::SPACE6))
-        .h(px(18.0))
-        .rounded(px(style::CORNER_RADIUS))
-        .bg(style::fill(0.06))
-        .hover(|s| s.bg(style::fill(0.10)))
-        .opacity(move || if spin_m.switching_machine.get() { 0.6_f32 } else { 1.0_f32 })
-        .label({
-            let m = m.clone();
-            move || m.tr("ui.machine.manage")
-        })
-        .on_press(move || {
-            let m = press_m.clone();
-            let (manage_m, win) = (m.clone(), win.clone());
-            crate::model::run_root(async move {
-                m.show_machine_menu(move || {
-                    crate::ui_proxy::open_side(&manage_m, &win, row.clone(), crate::model::SideKind::Machines);
-                })
-                .await;
-            });
-        })
-        .child(
-            view().w(px(8.0)).h(px(8.0)).rounded(px(4.0)).bg(move || {
-                if dot_m.switching_machine.get() {
-                    return style::warning();
-                }
-                if let Some(machine) = dot_m.remote.get() {
-                    return match dot_m.machine_status(&machine.id) {
-                        crate::remote::MachineStatus::Connected(_) => style::positive(),
-                        crate::remote::MachineStatus::Failed(_) => style::negative(),
-                        crate::remote::MachineStatus::Checking => style::warning(),
-                        crate::remote::MachineStatus::Unknown => style::tertiary_label(),
-                    };
-                }
-                match dot_m.status.get() {
-                    RuntimeStatus::Running => style::positive(),
-                    RuntimeStatus::Starting => style::warning(),
-                    RuntimeStatus::Failed => style::negative(),
-                    RuntimeStatus::Stopped => style::tertiary_label(),
-                }
-            }),
-        )
-        .child(
-            text({
-                let m = m.clone();
-                move || match m.remote.get() {
-                    Some(machine) => format!("{} · {}", machine.name, machine.display_address()),
-                    None => format!("{} · {}", m.tr("ui.machine.local"), m.target.with(|t| t.controller.clone())),
-                }
-            })
-            .max_w(px(170.0))
-            .truncate()
-            .text_size(px(font::CAPTION))
-            .font_weight(FontWeight::SEMIBOLD)
-            .text_color(style::primary_label()),
-        )
-        .child(icon(icons::chevron_up_down(), 8.0, style::tertiary_label))
+        .child(image(move || ImageSrc::from(src())).w(px(14.0)).h(px(14.0)).tint_color(move || tone()))
 }
 
 // --- Mode switcher and tabs --------------------------------------------------
 
-fn mode_and_tabs(m: Model) -> impl IntoElement {
-    let modes = CoreMode::ALL.map(|mode| mode_button(m.clone(), mode));
+/// The tabs: a toolbar of icons over labels (System Settings' toolbar).
+/// (The outbound mode is a row of the proxy tab, with a native submenu.)
+fn tabs(m: Model) -> impl IntoElement {
     let tabs = RootTab::ALL.map(|tab| tab_button(m.clone(), tab));
-    view()
-        .gap(px(style::SPACE2))
-        .child(view().flex_row().gap(px(style::SPACE2)).children(modes))
-        .child(view().flex_row().gap(px(style::SPACE2)).children(tabs))
+    // Rules, connections and logs open in the advanced window.
+    let manage_m = m.clone();
+    let manage = tab_face(
+        icons::desktop(),
+        {
+            let m = m.clone();
+            move || m.tr("ui.manager.open")
+        },
+        || false,
+    )
+    .on_press(move || manage_m.open_manager(None));
+    view().pb(px(style::SPACE4)).child(view().flex_row().gap(px(style::SPACE2)).children(tabs).child(manage))
 }
 
-fn mode_icon(mode: CoreMode) -> String {
-    match mode {
-        CoreMode::Rule => icons::shield(),
-        CoreMode::Global => icons::globe(),
-        CoreMode::Direct => icons::arrow_direct(),
+fn tab_icon(tab: RootTab) -> String {
+    match tab {
+        RootTab::Proxy => icons::globe(),
+        RootTab::System => icons::gear(),
     }
 }
 
-fn mode_button(m: Model, mode: CoreMode) -> impl IntoElement {
-    let selected = {
-        let m = m.clone();
-        move || m.mode.get() == Some(mode)
-    };
-    let enabled = {
-        let m = m.clone();
-        move || m.is_mode_switch_enabled()
-    };
+fn tab_button(m: Model, tab: RootTab) -> impl IntoElement {
     let press_m = m.clone();
-    let press_enabled = enabled.clone();
-    view()
-        .flex_1()
-        .h(px(28.0))
-        .flex_row()
-        .items_center()
-        .justify_center()
-        .gap(px(style::SPACE4))
-        .rounded(px(style::CORNER_RADIUS))
-        .border_1()
-        .border_color({
-            let selected = selected.clone();
-            move || if selected() { style::accent(0.35) } else { style::accent(0.0) }
-        })
-        .bg({
-            let selected = selected.clone();
-            move || if selected() { style::accent(0.16) } else { style::fill(0.0) }
-        })
-        .hover(|s| s.bg(style::fill(0.06)))
-        .opacity({
-            let enabled = enabled.clone();
-            move || if enabled() { 1.0_f32 } else { 0.55_f32 }
-        })
-        .on_press(move || {
-            if press_enabled() {
-                let m = press_m.clone();
-                crate::model::run_root(async move { m.switch_mode(mode).await });
-            }
-        })
-        .child(image(ImageSrc::from(mode_icon(mode))).w(px(13.0)).h(px(13.0)).tint_color({
-            let selected = selected.clone();
-            move || if selected() { style::info() } else { style::secondary_label() }
-        }))
-        .child(
-            text({
-                let m = m.clone();
-                move || m.tr(mode.title_key())
-            })
-            .text_size(px(font::CALLOUT))
-            .font_weight(FontWeight::SEMIBOLD)
-            .text_color(move || if selected() { style::info() } else { style::primary_label() }),
-        )
+    tab_face(
+        tab_icon(tab),
+        {
+            let m = m.clone();
+            move || m.tr(tab.title_key())
+        },
+        move || m.tab.get() == tab,
+    )
+    .on_press(move || press_m.tab.set(tab))
 }
 
-fn tab_button(m: Model, tab: RootTab) -> impl IntoElement {
-    let selected = {
-        let m = m.clone();
-        move || m.tab.get() == tab
-    };
-    let press_m = m.clone();
+/// A toolbar item: an icon over its label, tinted while `selected`.
+fn tab_face(
+    icon: String,
+    label: impl Fn() -> String + 'static,
+    selected: impl Fn() -> bool + Clone + 'static,
+) -> nsh_core::element::View {
+    let (s1, s2) = (selected.clone(), selected.clone());
     view()
         .flex_1()
-        .h(px(28.0))
+        .h(px(40.0))
         .items_center()
         .justify_center()
-        .rounded(px(style::CORNER_RADIUS))
-        .hover(|s| s.bg(style::fill(0.06)))
-        .on_press(move || press_m.tab.set(tab))
+        .gap(px(3.0))
+        .rounded(px(8.0))
+        .bg(move || if s1() { style::accent(0.13) } else { style::accent(0.0) })
+        .hover(|s| s.bg(style::fill(0.05)))
+        .transition_colors()
+        .duration(140.0)
+        .child(image(ImageSrc::from(icon)).w(px(15.0)).h(px(15.0)).tint_color(move || {
+            if s2() { style::info() } else { style::secondary_label() }
+        }))
         .child(
-            text({
-                let m = m.clone();
-                move || m.tr(tab.title_key())
-            })
-            .text_size(px(font::CALLOUT))
-            .font_weight(FontWeight::SEMIBOLD)
-            .text_color({
-                let selected = selected.clone();
-                move || if selected() { style::primary_label() } else { style::secondary_label() }
-            }),
-        )
-        .child(
-            view()
-                .absolute()
-                .bottom(px(0.0))
-                .w(px(18.0))
-                .h(px(2.0))
-                .rounded(px(1.0))
-                .bg(move || if selected() { style::info() } else { style::accent(0.0) }),
+            text(label)
+                .text_size(px(font::CAPTION))
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(move || if selected() { style::info() } else { style::secondary_label() }),
         )
 }
 
 // --- Tab content -------------------------------------------------------------
 
 fn tab_content(m: Model, win: nsh_core::element::desktop::WindowRef) -> impl IntoElement {
-    let (proxy_m, conn_m, logs_m) = (m.clone(), m.clone(), m.clone());
+    let proxy_m = m.clone();
     view()
         .py(px(style::SPACE6))
         .child(when(
@@ -397,20 +380,6 @@ fn tab_content(m: Model, win: nsh_core::element::desktop::WindowRef) -> impl Int
                 move || m.tab.get() == RootTab::Proxy
             },
             move || crate::ui_proxy::proxy_tab(proxy_m.clone(), win.clone()),
-        ))
-        .child(when(
-            {
-                let m = m.clone();
-                move || m.tab.get() == RootTab::Connections
-            },
-            move || crate::ui_tabs::connections_tab(conn_m.clone()),
-        ))
-        .child(when(
-            {
-                let m = m.clone();
-                move || m.tab.get() == RootTab::Logs
-            },
-            move || crate::ui_tabs::logs_tab(logs_m.clone()),
         ))
         .child(when(
             {
@@ -428,7 +397,8 @@ fn footer(m: Model) -> impl IntoElement {
     view()
         .flex_row()
         .items_center()
-        .h(px(28.0))
+        .h(px(30.0))
+        .px(px(style::SPACE2))
         .border_t_1()
         .border_color(style::separator())
         .child(
@@ -488,7 +458,7 @@ fn core_upgrade_button(m: Model) -> impl IntoElement {
             let m = m.clone();
             move || if m.is_live() { 1.0_f32 } else { 0.5_f32 }
         })
-        .tooltip(text(move || {
+        .tooltip(crate::widgets::tip(move || {
             let m = &help_m;
             if !m.is_live() {
                 return m.tr("ui.footer.core_upgrade.help.disabled");

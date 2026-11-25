@@ -39,11 +39,15 @@ sudo launchctl bootout system/dev.mihobar.helper; sudo rm -f /Library/LaunchDaem
 ## Test
 
 ```bash
-MIHOBAR_HOME="$(mktemp -d)" MIHOBAR_SHOW_PANEL=1 nsh test
+scripts/test.sh
 ```
 
-`MIHOBAR_HOME` moves the data directory (default
-`~/Library/Application Support/mihobar`) so tests never touch real data.
+It runs `nsh test` with `MIHOBAR_HOME` set to a fresh directory (the data
+directory, default `~/Library/Application Support/mihobar`, is never
+touched) and the panel shown. The tests start their own core with its
+controller on `127.0.0.1:9097` and its mixed port on 7897, so the script
+refuses to run while another Mihobar holds those ports: the tests would
+otherwise drive that Mihobar's core.
 The subscription test downloads `http://127.0.0.1:8765/sub.yaml`: serve a
 mihomo config under that name first, for example
 
@@ -51,8 +55,16 @@ mihomo config under that name first, for example
 python3 -m http.server 8765 --bind 127.0.0.1 --directory path/to/dir-with-sub.yaml
 ```
 
-The remote machine test uses the test's own core (`127.0.0.1:9097`) as the
-"remote" machine.
+## Layout
+
+The menu bar panel holds the node tab (traffic, outbound mode, configs,
+system proxy, TUN, proxy groups) and every setting. The rules, connections
+and logs are in a separate advanced window, opened from the panel's 高级
+button. In the app bundle that window is a process of its own, started by
+the panel (`MIHOBAR_ADVANCED` names its section) and reading the same core;
+closing it ends the process, so the panel's memory never grows with it.
+Outside a bundle (development, tests) it opens in the panel's process.
+Either way only the section on screen is mounted, with its stream and list.
 
 ## Status
 
@@ -63,7 +75,7 @@ All six milestones are done:
 3. Connections, logs and rules tabs; log files in `logs/`; streams opened only for what is on screen.
 4. Settings tab, maintenance, core upgrade, settings laid over the config after restarts, menu bar speed styles.
 5. System proxy, bypass list, TUN, the privileged helper (built and tested without root, not yet tried live).
-6. Subscriptions (import, auto update, refresh, delete), network monitoring (stop when offline, start again when back), Wi-Fi auto-switch (bind configs to Wi-Fi names; needs the location permission), remote machines (header menu, manager, editor; the panel drives another mihomo controller).
+6. Subscriptions (import, auto update, refresh, delete), network monitoring (stop when offline, start again when back), Wi-Fi auto-switch (bind configs to Wi-Fi names; needs the location permission), remote machines (later removed).
 
 Not ported yet: keyboard shortcuts, the web UI button, hover-only buttons,
 copied/mode banners, refreshing all providers at startup; TUN stack chips

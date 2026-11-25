@@ -275,6 +275,7 @@
 "ui.machine.remote_readonly": "(远程连接不可变更)",
 "ui.machine.save": "保存",
 "ui.menu.quick": "快捷操作",
+"ui.quick.outbound_mode": "出站模式",
 "ui.mode.direct": "直连",
 "ui.mode.global": "全局",
 "ui.mode.rule": "规则",
@@ -388,5 +389,7 @@
 "ui.tab.logs": "日志",
 "ui.tab.proxy": "节点",
 "ui.tab.rules": "分流",
-"ui.tab.system": "设置"
+"ui.tab.system": "设置",
+"ui.manager.title": "Mihobar 高级",
+"ui.manager.open": "高级"
 }

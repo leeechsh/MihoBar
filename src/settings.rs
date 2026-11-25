@@ -138,8 +138,6 @@ pub struct Settings {
     /// Wi-Fi auto-switch: on, and the Wi-Fi bound to configs.
     pub ssid_strategy_enabled: bool,
     pub ssid_rules: Vec<SsidRule>,
-    /// ClashBar's `clashbar.remote.machines`.
-    pub remote_machines: Vec<crate::remote::RemoteMachine>,
 }
 
 impl Default for Settings {
@@ -166,17 +164,29 @@ impl Default for Settings {
             remote_subscriptions: Default::default(),
             ssid_strategy_enabled: false,
             ssid_rules: Vec::new(),
-            remote_machines: Vec::new(),
         }
     }
 }
 
 impl Settings {
     pub fn load(path: &PathBuf) -> Self {
-        std::fs::read(path)
+        let mut settings: Self = std::fs::read(path)
             .ok()
             .and_then(|bytes| serde_json::from_slice(&bytes).ok())
-            .unwrap_or_default()
+            .unwrap_or_default();
+        // Every port kept as 0 (no inbound at all) was read from a core
+        // that could not bind them (another client held them): laid over
+        // each start, it closed the ports the config opens. They follow
+        // the config again.
+        if let Some(c) = settings.core_settings.as_mut() {
+            let zero = |p: &str| p.trim() == "0";
+            if [&c.port, &c.socks_port, &c.mixed_port, &c.redir_port, &c.tproxy_port].iter().all(|p| zero(p)) {
+                for p in [&mut c.port, &mut c.socks_port, &mut c.mixed_port, &mut c.redir_port, &mut c.tproxy_port] {
+                    p.clear();
+                }
+            }
+        }
+        settings
     }
 
     pub fn save(&self, path: &PathBuf) {

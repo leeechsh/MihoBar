@@ -37,7 +37,7 @@ objc2-foundation = { version = "0.3", features = ["NSString", "NSData", "NSGeome
 # location permission it needs.
 objc2-core-wlan = { version = "0.3", default-features = false, features = ["std", "CWWiFiClient", "CWInterface"] }
 objc2-core-location = { version = "0.3", default-features = false, features = ["std", "CLLocationManager"] }
-objc2-app-kit = { version = "0.3", features = ["NSStatusBar", "NSStatusItem", "NSStatusBarButton", "NSButton", "NSControl", "NSView", "NSResponder", "NSImage", "NSWindow", "NSScreen", "NSFont", "NSColor", "NSParagraphStyle", "NSText", "NSStringDrawing", "NSAttributedString", "NSEvent", "NSGraphics", "NSCell", "NSButtonCell", "NSActionCell"] }
+objc2-app-kit = { version = "0.3", features = ["NSStatusBar", "NSStatusItem", "NSStatusBarButton", "NSButton", "NSControl", "NSView", "NSResponder", "NSImage", "NSWindow", "NSScreen", "NSFont", "NSColor", "NSParagraphStyle", "NSText", "NSStringDrawing", "NSAttributedString", "NSEvent", "NSGraphics", "NSCell", "NSButtonCell", "NSActionCell", "std", "NSRunningApplication", "libc"], default-features = false }
 
 [profile.release]
 opt-level = 3

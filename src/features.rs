@@ -268,7 +268,7 @@ impl Model {
         }
         self.tun_syncing.set(true);
         let result: Result<(), String> = async {
-            if enabled && !self.is_remote_untracked() {
+            if enabled {
                 self.ensure_tun_permissions(true).await?;
             }
             if !self.is_live_untracked() {
@@ -284,13 +284,11 @@ impl Model {
         .await;
         match result {
             Ok(()) => {
-                if !self.is_remote_untracked() {
-                    self.settings.update(|s| {
-                        if let Some(c) = s.core_settings.as_mut() {
-                            c.tun_enabled = enabled;
-                        }
-                    });
-                }
+                self.settings.update(|s| {
+                    if let Some(c) = s.core_settings.as_mut() {
+                        c.tun_enabled = enabled;
+                    }
+                });
                 let state = self.tr_args(if enabled { "log.tun.enabled" } else { "log.tun.disabled" }, &[]);
                 self.log_app("info", self.tr_args("log.tun.toggled", &[&state]));
             }
@@ -316,9 +314,7 @@ impl Model {
         }
         self.tun_syncing.set(true);
         let result: Result<(), String> = async {
-            if !self.is_remote_untracked() {
-                self.ensure_tun_permissions(true).await?;
-            }
+            self.ensure_tun_permissions(true).await?;
             if !self.is_live_untracked() {
                 return Ok(());
             }
@@ -333,11 +329,7 @@ impl Model {
         match result {
             Ok(()) => {
                 let s = stack.to_owned();
-                let remote = self.is_remote_untracked();
                 self.settings.update(|st| {
-                    if remote {
-                        return;
-                    }
                     st.tun_stack = Some(s);
                     if let Some(c) = st.core_settings.as_mut() {
                         c.tun_enabled = true;
@@ -504,9 +496,6 @@ impl Model {
     }
 
     async fn auto_stop_for_network_loss(&self) {
-        if self.is_remote_untracked() {
-            return;
-        }
         let mut logged = false;
         for _ in 0..120 {
             if self.network_online.get_untracked() != Some(false) || !self.is_running_untracked() {
@@ -531,9 +520,6 @@ impl Model {
     }
 
     async fn auto_start_for_network_recovery(&self) {
-        if self.is_remote_untracked() {
-            return;
-        }
         let mut logged = false;
         for _ in 0..120 {
             if self.network_online.get_untracked() != Some(true) || !self.resume_after_network.get_untracked() {
@@ -662,9 +648,6 @@ impl Model {
     /// Switches to the config the current Wi-Fi is bound to (ClashBar's
     /// `applySSIDStrategyForCurrentSSIDIfNeeded`).
     pub async fn apply_ssid_strategy(&self) {
-        if self.is_remote_untracked() {
-            return;
-        }
         if !self.settings.with_untracked(|s| s.ssid_strategy_enabled) {
             return;
         }

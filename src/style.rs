@@ -10,6 +10,10 @@ pub const SPACE4: f32 = 4.0;
 pub const SPACE6: f32 = 6.0;
 pub const SPACE8: f32 = 8.0;
 pub const CORNER_RADIUS: f32 = 6.0;
+/// A grouped card's corners (System Settings' inset groups).
+pub const CARD_RADIUS: f32 = 10.0;
+/// A colored icon tile's side (System Settings' row icons).
+pub const TILE: f32 = 22.0;
 pub const PANEL_CORNER_RADIUS: f32 = 10.0;
 pub const ROW_HEIGHT: f32 = 32.0;
 pub const COMPACT_ROW_HEIGHT: f32 = 20.0;
@@ -61,6 +65,44 @@ pub fn warning() -> AdaptiveColor {
 /// `systemRed`.
 pub fn negative() -> AdaptiveColor {
     c(0xff3b30, 1.0, 0xff453a, 1.0)
+}
+/// The panel's white material: laid over the popover backdrop (white in
+/// light, the menu gray in dark), as a native menu's.
+pub fn menu_background() -> AdaptiveColor {
+    c(0xffffff, 0.82, 0x2a2a2c, 0.55)
+}
+/// A normal window's opaque background (`windowBackgroundColor`): the
+/// advanced window.
+pub fn window_background() -> AdaptiveColor {
+    c(0xffffff, 1.0, 0x1e1e1e, 1.0)
+}
+/// The advanced window's sidebar (opaque, a shade off the window).
+pub fn sidebar_background() -> AdaptiveColor {
+    c(0xf5f5f7, 1.0, 0x2a2a2c, 1.0)
+}
+/// An inset group's fill on the white panel.
+pub fn card_fill() -> AdaptiveColor {
+    c(0x000000, 0.035, 0xffffff, 0.065)
+}
+/// An inset group's hairline border.
+pub fn card_border() -> AdaptiveColor {
+    c(0x000000, 0.07, 0xffffff, 0.08)
+}
+/// A segmented control's or a field's track.
+pub fn control_track() -> AdaptiveColor {
+    c(0x000000, 0.06, 0xffffff, 0.09)
+}
+/// A raised control surface: a segment's thumb, a pop-up button.
+pub fn elevated() -> AdaptiveColor {
+    c(0xffffff, 1.0, 0x6b6b70, 1.0)
+}
+/// `systemPink`.
+pub fn pink() -> AdaptiveColor {
+    c(0xff2d55, 1.0, 0xff375f, 1.0)
+}
+/// `systemGray`.
+pub fn gray() -> AdaptiveColor {
+    c(0x8e8e93, 1.0, 0x98989d, 1.0)
 }
 /// White in both appearances (text on a filled button).
 pub fn white() -> AdaptiveColor {

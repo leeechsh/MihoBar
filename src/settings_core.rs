@@ -37,7 +37,9 @@ pub struct RuntimeConfig {
 
 impl RuntimeConfig {
     pub fn to_core_settings(&self) -> CoreSettings {
-        let port = |v: Option<i64>| v.map(|p| p.to_string()).unwrap_or_default();
+        // 0 (a port off, or one the core could not bind) is kept as unset:
+        // laid over the next start, it would close the config's port.
+        let port = |v: Option<i64>| v.filter(|p| *p > 0).map(|p| p.to_string()).unwrap_or_default();
         CoreSettings {
             mode: self.mode.clone().unwrap_or_else(|| "rule".into()).to_lowercase(),
             allow_lan: self.allow_lan.unwrap_or(false),
@@ -127,9 +129,6 @@ pub enum TaskState {
 impl Model {
     /// The settings shown: the kept ones, else the core's.
     pub fn core_settings(&self) -> CoreSettings {
-        if self.is_remote() {
-            return self.remote_core.get().unwrap_or_else(|| self.runtime_config.with(|r| r.to_core_settings()));
-        }
         self.settings
             .with(|s| s.core_settings.clone())
             .unwrap_or_else(|| self.runtime_config.with(|r| r.to_core_settings()))
@@ -138,10 +137,6 @@ impl Model {
     fn update_core_settings(&self, f: impl FnOnce(&mut CoreSettings)) {
         let mut next = self.core_settings();
         f(&mut next);
-        if self.is_remote_untracked() {
-            self.remote_core.set(Some(next));
-            return;
-        }
         self.settings.update(|s| s.core_settings = Some(next));
     }
 
@@ -151,10 +146,7 @@ impl Model {
     pub(crate) fn sync_runtime_config(&self, incoming: RuntimeConfig) {
         let previous = self.runtime_config.get_untracked();
         let had_previous = previous != RuntimeConfig::default();
-        if self.is_remote_untracked() {
-            // A remote machine's settings are its own (ClashBar keeps none).
-            self.remote_core.set(Some(incoming.to_core_settings()));
-        } else if self.settings.with_untracked(|s| s.core_settings.is_none()) {
+        if self.settings.with_untracked(|s| s.core_settings.is_none()) {
             self.settings.update(|s| s.core_settings = Some(incoming.to_core_settings()));
         } else if had_previous && !self.preserve_settings_on_sync.get_untracked() {
             let (old, new) = (previous.to_core_settings(), incoming.to_core_settings());
@@ -225,7 +217,7 @@ impl Model {
         };
         self.refresh_from_api().await;
         self.settings_syncing.set(None);
-        if ok && keys.split(", ").any(|k| matches!(k, "mixed-port" | "port" | "socks-port")) && !syncing_key.ends_with("-overlay") && !self.is_remote_untracked() {
+        if ok && keys.split(", ").any(|k| matches!(k, "mixed-port" | "port" | "socks-port")) && !syncing_key.ends_with("-overlay") {
             self.sync_system_proxy_port().await;
         }
         ok
@@ -296,9 +288,6 @@ impl Model {
     /// (ClashBar's `applyEditableSettingsOverlay`). TUN comes with the
     /// system proxy milestone.
     pub(crate) async fn apply_settings_overlay(&self, syncing_key: &str) {
-        if self.is_remote_untracked() {
-            return;
-        }
         let Some(overlay) = self.settings.with_untracked(|s| s.core_settings.clone()) else { return };
         let fallback = self.runtime_config.get_untracked().to_core_settings();
         let level = if overlay.log_level.trim().is_empty() { fallback.log_level.clone() } else { overlay.log_level.clone() };

@@ -15,7 +15,6 @@ pub mod model;
 pub mod netmon;
 pub mod paths;
 pub mod proxy;
-pub mod remote;
 pub mod settings;
 pub mod settings_core;
 pub mod stream;
@@ -26,13 +25,14 @@ pub mod statusitem;
 pub mod sysproxy;
 pub mod style;
 pub mod ui;
-pub mod ui_machines;
 pub mod ui_proxy;
 pub mod ui_settings;
+pub mod ui_manager;
 pub mod ui_tabs;
 #[cfg(target_os = "macos")]
 pub mod wifi;
 /// The Wi-Fi permission states (also where there is no Wi-Fi module).
+pub mod widgets;
 pub mod wifi_types {
     #[cfg(target_os = "macos")]
     pub use crate::wifi::Authorization;
@@ -58,6 +58,53 @@ fn native(registry: &mut Registry) {
 /// and hides it.
 #[component]
 pub fn App() -> impl IntoElement {
+    // Started by the panel's process for the advanced window: that window
+    // alone, and the process ends with it.
+    match crate::model::AdvancedLaunch::from_env() {
+        Some(launch) => advanced_app(launch).into_element(),
+        None => panel_app().into_element(),
+    }
+}
+
+/// The advanced window's process: its main window (the panel's, from
+/// `nsh.json`) made a normal window showing rules, connections and logs.
+/// Closing it quits the process, which gives all its memory back.
+fn advanced_app(launch: crate::model::AdvancedLaunch) -> impl IntoElement {
+    use nsh_core::desktop::{Backdrop, TitleBarOptions, TitleBarStyle, WindowAttributes, WindowFrameStyle, WindowLevel, Workspaces};
+    let m = Model::new_advanced(launch);
+    let win = current_window();
+    let mut a = WindowAttributes::default();
+    a.title = Some(m.tr("ui.manager.title"));
+    let mut bar = TitleBarOptions::default();
+    bar.style = TitleBarStyle::Hidden;
+    a.title_bar = Some(bar);
+    a.frame = Some(WindowFrameStyle::Default);
+    a.min_size = Some(Some(size(Points(620.0), Points(420.0))));
+    a.resizable = Some(true);
+    a.movable = Some(true);
+    a.minimizable = Some(true);
+    a.maximizable = Some(true);
+    a.closable = Some(true);
+    a.close_on_press = Some(true);
+    a.level = Some(WindowLevel::Normal);
+    a.workspaces = Some(Workspaces::Current);
+    a.backdrop = Some(Backdrop::None);
+    a.transparent = Some(false);
+    a.taskbar = Some(true);
+    win.set(a);
+    win.set_bounds(WindowFrame {
+        width: Some(Points(crate::ui_manager::WIDTH)),
+        height: Some(Points(crate::ui_manager::HEIGHT)),
+        ..Default::default()
+    });
+    win.center(None);
+    win.focus();
+    win.on_close_press(|_| nsh_core::element::desktop::quit());
+    view().flex_1().child(crate::ui_manager::manager(m))
+}
+
+/// The menu bar panel's process.
+fn panel_app() -> impl IntoElement {
     let m = Model::new();
     let win = current_window();
 
@@ -157,9 +204,11 @@ pub fn App() -> impl IntoElement {
             // The focus moving between the two windows passes through
             // neither: look once it has landed.
             set_timeout(std::time::Duration::from_millis(120), move || {
-                let focused = |w: &nsh_core::element::desktop::WindowRef| w.state().is_some_and(|s| s.focused);
-                let side_focused = side_window.borrow().as_ref().is_some_and(|w| focused(w));
-                if focused(&panel) || side_focused || m.settings.with_untracked(|s| s.pinned) {
+                // No state (a window not on a screen, as in headless
+                // tests): the focus is not known, so the panel stays.
+                let Some(panel_state) = panel.state() else { return };
+                let side_focused = side_window.borrow().as_ref().is_some_and(|w| w.state().is_some_and(|s| s.focused));
+                if panel_state.focused || side_focused || m.settings.with_untracked(|s| s.pinned) {
                     return;
                 }
                 panel.hide();
@@ -191,6 +240,12 @@ pub fn App() -> impl IntoElement {
         let win = win.clone();
         let m = m.clone();
         set_timeout(std::time::Duration::from_millis(0), move || {
+            // Where a menu bar item would put it: the top right of the
+            // main screen (off the management window, centered).
+            let screen = crate::geometry::visible_frame_at(f32::NAN);
+            let icon = crate::geometry::Rect { x: screen.x + screen.w - 60.0, y: screen.y - 22.0, w: 22.0, h: 22.0 };
+            let (x, y) = crate::geometry::panel_origin(icon, crate::style::PANEL_WIDTH, 4.0);
+            win.set_bounds(WindowFrame { x: Some(Points(x)), y: Some(Points(y)), ..Default::default() });
             win.focus();
             m.panel_visible.set(true);
         });
@@ -284,7 +339,44 @@ pub fn App() -> impl IntoElement {
                         });
                     }
                 });
-                crate::ui_proxy::side_content(m)
+                crate::widgets::pop_in(crate::ui_proxy::side_content(m))
+            })
+    };
+
+    // The management window (rules, connections, logs, advanced
+    // settings): made as it opens, all of it dropped as it closes.
+    let manager = {
+        let open_m = m.clone();
+        let close_m = m.clone();
+        let title_m = m.clone();
+        let m = m.clone();
+        nsh_core::element::desktop::window()
+            .id("manager")
+            .kind(WindowKind::Normal)
+            .title(move || title_m.tr("ui.manager.title"))
+            .attributes({
+                let mut a = nsh_core::desktop::WindowAttributes::default();
+                a.min_size = Some(Some(size(Points(620.0), Points(420.0))));
+                // The sidebar runs up under the window's controls.
+                let mut bar = nsh_core::desktop::TitleBarOptions::default();
+                bar.style = nsh_core::desktop::TitleBarStyle::Hidden;
+                a.title_bar = Some(bar);
+                a
+            })
+            .default_size(size(Points(crate::ui_manager::WIDTH), Points(crate::ui_manager::HEIGHT)))
+            .restore_bounds(true)
+            .open(move || open_m.manager_open.get())
+            .on_open_change(move |change| {
+                if !change.open {
+                    close_m.set_manager_window(None);
+                    close_m.manager_open.set(false);
+                }
+            })
+            .content(move || {
+                let me = current_window();
+                m.set_manager_window(Some(me.clone()));
+                me.focus();
+                crate::ui_manager::manager(m.clone())
             })
     };
 
@@ -292,8 +384,11 @@ pub fn App() -> impl IntoElement {
     // `unloadPopoverContent`): a hidden panel holds no views.
     let shown = m.clone();
     let content_m = m.clone();
+    // The panel's white material covers the whole window.
     view()
         .flex_1()
+        .bg(crate::style::menu_background())
         .child(when(move || shown.panel_visible.get(), move || ui::panel(content_m.clone(), win.clone())))
         .child(side)
+        .child(manager)
 }

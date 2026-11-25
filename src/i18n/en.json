@@ -275,6 +275,7 @@
 "ui.machine.remote_readonly": "(Remote, read-only)",
 "ui.machine.save": "Save",
 "ui.menu.quick": "Quick Actions",
+"ui.quick.outbound_mode": "Outbound Mode",
 "ui.mode.direct": "Direct",
 "ui.mode.global": "Global",
 "ui.mode.rule": "Rule",
@@ -388,5 +389,7 @@
 "ui.tab.logs": "Log",
 "ui.tab.proxy": "Node",
 "ui.tab.rules": "Rule",
-"ui.tab.system": "Setting"
+"ui.tab.system": "Setting",
+"ui.manager.title": "Mihobar Advanced",
+"ui.manager.open": "Advanced"
 }

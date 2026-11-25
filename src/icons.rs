@@ -114,36 +114,54 @@ icons! {
     plus => "<path d='M12 5v14M5 12h14'/>";
     pencil => "<path d='M17 3l4 4L8 20H4v-4z'/><path d='M14 6l4 4'/>";
     chevron_left => "<path d='M15 6l-6 6 6 6'/>";
+    gear => "<circle cx='12' cy='12' r='3'/><path d='M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z'/>";
+    shuffle => "<path d='M16 3h5v5M4 20L21 3M21 16v5h-5M15 15l6 6M4 4l5 5'/>";
+    pulse => "<path d='M22 12h-4l-3 9L9 3l-3 9H2'/>";
+    chevron_up_down_small => "<path d='M8 10l4-4 4 4'/><path d='M8 14l4 4 4-4'/>";
     doc_text => "<path d='M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z'/><path d='M14 2v6h6'/><path d='M8 13h8M8 17h5'/>";
 }
 
-/// The brand mark (header logo and app icon): a hexagon with a node.
+/// Mihobar's cat (an original drawing): its head with pointed ears.
+const CAT_HEAD: &str = "M4.2 10.2L4.8 3.4L9.3 6.9Q12 6.1 14.7 6.9L19.2 3.4L19.8 10.2Q21 12.1 21 14.2C21 18.4 17.2 21 12 21C6.8 21 3 18.4 3 14.2Q3 12.1 4.2 10.2Z";
+
+/// The brand mark (header logo): the cat, with open eyes.
 pub fn brand_logo() -> String {
-    svg("<path d='M12 2.5l8.2 4.75v9.5L12 21.5l-8.2-4.75v-9.5z' fill='#000' stroke='none'/><circle cx='12' cy='12' r='3.2' fill='#fff' stroke='none'/><path d='M12 8.8V5.5M14.8 13.6l2.9 1.7M9.2 13.6l-2.9 1.7' stroke='#fff' stroke-width='1.8'/>")
+    svg(&cat_open())
 }
 
-/// The menu bar marks (templates): running, stopped, TUN on.
-const STATUS_RUN: &str = "<path d='M12 2.5l8.2 4.75v9.5L12 21.5l-8.2-4.75v-9.5z' fill='#000' stroke='none'/><circle cx='12' cy='12' r='3.2' fill='#fff' stroke='none' /><path d='M12 8.8V5.5M14.8 13.6l2.9 1.7M9.2 13.6l-2.9 1.7' stroke='#fff' stroke-width='1.8'/>";
-const STATUS_SLEEP: &str = "<path d='M12 3l7.8 4.5v9L12 21l-7.8-4.5v-9z' stroke-width='1.8'/><circle cx='12' cy='12' r='2.6' stroke-width='1.8'/>";
-const STATUS_TUN: &str = "<path d='M12 2.5l8.2 4.75v9.5L12 21.5l-8.2-4.75v-9.5z' fill='#000' stroke='none'/><path d='M7.5 12h9M13.5 9l3 3-3 3' stroke='#fff' stroke-width='1.9'/>";
+fn cat_open() -> String {
+    format!(
+        "<path d='{CAT_HEAD}' fill='#000' stroke='none'/><ellipse cx='8.9' cy='14' rx='1.35' ry='1.6' fill='#fff' stroke='none'/><ellipse cx='15.1' cy='14' rx='1.35' ry='1.6' fill='#fff' stroke='none'/><path d='M11.2 17.1h1.6l-.8.9z' fill='#fff' stroke='#fff' stroke-width='.8'/>"
+    )
+}
+
+/// Asleep (the core stopped): an outline, eyes closed.
+fn cat_sleep() -> String {
+    format!("<path d='{CAT_HEAD}' stroke-width='1.7'/><path d='M7.6 14.4q1.3 1.1 2.6 0M13.8 14.4q1.3 1.1 2.6 0' stroke-width='1.6'/>")
+}
+
+/// TUN on: the cat with narrowed, focused eyes.
+fn cat_tun() -> String {
+    format!("<path d='{CAT_HEAD}' fill='#000' stroke='none'/><path d='M7.6 13.9h2.7M13.7 13.9h2.7' stroke='#fff' stroke-width='1.7'/><path d='M11.2 17.1h1.6l-.8.9z' fill='#fff' stroke='#fff' stroke-width='.8'/>")
+}
 
 /// The menu bar marks as SVG documents (for the hand-drawn status item).
 pub fn status_svg(running: bool, tun: bool) -> String {
-    svg_doc(match (running, tun) {
-        (false, _) => STATUS_SLEEP,
-        (true, true) => STATUS_TUN,
-        (true, false) => STATUS_RUN,
+    svg_doc(&match (running, tun) {
+        (false, _) => cat_sleep(),
+        (true, true) => cat_tun(),
+        (true, false) => cat_open(),
     })
 }
 
 pub fn status_run() -> String {
-    svg("<path d='M12 2.5l8.2 4.75v9.5L12 21.5l-8.2-4.75v-9.5z' fill='#000' stroke='none'/><circle cx='12' cy='12' r='3.2' fill='#fff' stroke='none' /><path d='M12 8.8V5.5M14.8 13.6l2.9 1.7M9.2 13.6l-2.9 1.7' stroke='#fff' stroke-width='1.8'/>")
+    svg(&cat_open())
 }
 
 pub fn status_sleep() -> String {
-    svg("<path d='M12 3l7.8 4.5v9L12 21l-7.8-4.5v-9z' stroke-width='1.8'/><circle cx='12' cy='12' r='2.6' stroke-width='1.8'/>")
+    svg(&cat_sleep())
 }
 
 pub fn status_tun() -> String {
-    svg("<path d='M12 2.5l8.2 4.75v9.5L12 21.5l-8.2-4.75v-9.5z' fill='#000' stroke='none'/><path d='M7.5 12h9M13.5 9l3 3-3 3' stroke='#fff' stroke-width='1.9'/>")
+    svg(&cat_tun())
 }

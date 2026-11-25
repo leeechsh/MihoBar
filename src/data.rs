@@ -14,9 +14,10 @@ use serde_json::Value;
 pub const RETAINED_CONNECTIONS: usize = 120;
 /// Rules kept (ClashBar's `retainedRuleLimit`).
 pub const RETAINED_RULES: usize = 20000;
-/// Logs kept while the panel shows, and while it is hidden.
-pub const MAX_LOGS_VISIBLE: usize = 5000;
-pub const MAX_LOGS_HIDDEN: usize = 20;
+/// Logs kept while the logs section shows, and while it does not (a few
+/// tens of KB: what happened just before it opens). The files keep all.
+pub const MAX_LOGS_VISIBLE: usize = 1000;
+pub const MAX_LOGS_HIDDEN: usize = 200;
 /// Rows a tab lists at most (ClashBar's `prefix(120)`).
 pub const LISTED_ROWS: usize = 120;
 
@@ -358,6 +359,32 @@ pub fn decode_log_payload(payload: &str) -> Option<(String, String)> {
 }
 
 /// `yyyy-MM-dd HH:mm:ss` in local time.
+/// A line of a log file, as [`LogFile`] writes it:
+/// `[YYYY-MM-DD HH:MM:SS] [LEVEL] message` (local time).
+pub fn parse_log_line(line: &str) -> Option<(std::time::SystemTime, String, String)> {
+    let rest = line.strip_prefix('[')?;
+    let (stamp, rest) = rest.split_once("] [")?;
+    let (level, message) = rest.split_once("] ")?;
+    let (date, time) = stamp.split_once(' ')?;
+    let mut d = date.split('-').map(|p| p.parse::<i32>());
+    let mut t = time.split(':').map(|p| p.parse::<i32>());
+    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+    tm.tm_year = d.next()?.ok()? - 1900;
+    tm.tm_mon = d.next()?.ok()? - 1;
+    tm.tm_mday = d.next()?.ok()?;
+    tm.tm_hour = t.next()?.ok()?;
+    tm.tm_min = t.next()?.ok()?;
+    tm.tm_sec = t.next()?.ok()?;
+    tm.tm_isdst = -1;
+    // SAFETY: a filled-in tm; mktime reads it as local time.
+    let secs = unsafe { libc::mktime(&mut tm) };
+    if secs < 0 {
+        return None;
+    }
+    let at = std::time::UNIX_EPOCH + std::time::Duration::from_secs(secs as u64);
+    Some((at, level.to_lowercase(), message.to_owned()))
+}
+
 pub fn date_time(at: std::time::SystemTime) -> String {
     let secs = at.duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as libc::time_t).unwrap_or(0);
     let mut tm: libc::tm = unsafe { std::mem::zeroed() };
@@ -698,6 +725,17 @@ impl Model {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn log_lines_read_back() {
+        let at = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_795_000_000);
+        let line = format!("[{}] [INFO] PATCH /configs succeeded [mode]", date_time(at));
+        let (read_at, level, message) = parse_log_line(&line).unwrap();
+        assert_eq!(read_at, at);
+        assert_eq!(level, "info");
+        assert_eq!(message, "PATCH /configs succeeded [mode]");
+        assert!(parse_log_line("not a log line").is_none());
+    }
 
     #[test]
     fn parses_connections_and_rules() {

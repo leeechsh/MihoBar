@@ -13,6 +13,7 @@ use crate::format::{self, Relative};
 use crate::icons;
 use crate::model::{LogEntry, LogSource, Model};
 use crate::style::{self, font};
+use crate::widgets;
 
 fn icon_view(src: String, size: f32, color: impl Fn() -> AdaptiveColor + 'static) -> impl IntoElement {
     image(ImageSrc::from(src)).w(px(size)).h(px(size)).tint_color(move || color())
@@ -22,7 +23,7 @@ fn icon_view(src: String, size: f32, color: impl Fn() -> AdaptiveColor + 'static
 
 /// ClashBar's `tabControlCard`: the filters above a list.
 fn control_card() -> View {
-    view().gap(px(style::SPACE6)).p(px(style::SPACE6)).rounded(px(style::CORNER_RADIUS)).bg(style::fill(0.04))
+    widgets::card().gap(px(style::SPACE6)).p(px(style::SPACE6))
 }
 
 /// A search field (ClashBar's `filterTextField`).
@@ -31,11 +32,11 @@ fn filter_field(placeholder: impl Fn() -> String + 'static, value: Signal<String
         .flex_row()
         .items_center()
         .gap(px(style::SPACE4))
-        .h(px(24.0))
-        .px(px(style::SPACE6))
-        .rounded(px(style::CORNER_RADIUS))
-        .bg(style::fill(0.06))
-        .child(icon_view(icons::magnifier(), 11.0, style::tertiary_label))
+        .h(px(26.0))
+        .px(px(8.0))
+        .rounded(px(7.0))
+        .bg(style::control_track())
+        .child(icon_view(icons::magnifier(), 11.0, style::secondary_label))
         .child(
             input()
                 .flex_1()
@@ -55,28 +56,14 @@ fn filter_field(placeholder: impl Fn() -> String + 'static, value: Signal<String
         ))
 }
 
-/// A small icon button with a tooltip.
+/// A small round icon button with a tooltip.
 fn icon_button(
     src: impl Fn() -> String + 'static,
     tone: impl Fn() -> AdaptiveColor + 'static,
     label: impl Fn() -> String + 'static,
     on_press: impl Fn() + 'static,
 ) -> View {
-    let label = Rc::new(label);
-    view()
-        .w(px(22.0))
-        .h(px(22.0))
-        .items_center()
-        .justify_center()
-        .rounded(px(style::CORNER_RADIUS))
-        .hover(|s| s.bg(style::fill(0.08)))
-        .tooltip(text({
-            let label = label.clone();
-            move || label()
-        }))
-        .label(move || label())
-        .on_press(on_press)
-        .child(image(move || ImageSrc::from(src())).w(px(13.0)).h(px(13.0)).tint_color(move || tone()))
+    widgets::icon_button(src, tone, label, on_press)
 }
 
 /// A selection menu behind an icon (ClashBar's `compactSelectionMenu`).
@@ -116,7 +103,7 @@ fn badge(content: impl Fn() -> String + 'static) -> impl IntoElement {
         .px(px(style::SPACE6))
         .py(px(1.0))
         .rounded(px(8.0))
-        .bg(style::badge_fill())
+        .bg(style::control_track())
 }
 
 // --- Connections ----------------------------------------------------------------
@@ -125,10 +112,10 @@ pub fn connections_tab(m: Model) -> impl IntoElement {
     let filter_text = signal(String::new());
     let visible = {
         let m = m.clone();
-        move || {
+        computed(move || {
             let (transport, sort) = m.settings.with(|s| (s.connections_transport_filter, s.connections_sort));
             m.connections.with(|all| data::visible_connections(all, &filter_text.get(), transport, sort))
-        }
+        })
     };
     let (filter_m, sort_m, close_m, badge_m, place_m) = (m.clone(), m.clone(), m.clone(), m.clone(), m.clone());
     let controls = control_card()
@@ -162,12 +149,9 @@ pub fn connections_tab(m: Model) -> impl IntoElement {
                     },
                 ))
                 .child(view().flex_1())
-                .child(badge({
-                    let visible = visible.clone();
-                    move || {
-                        let total = badge_m.connections.with(|c| c.len()).min(data::LISTED_ROWS);
-                        format!("{}/{total}", visible().len())
-                    }
+                .child(badge(move || {
+                    let total = badge_m.connections.with(|c| c.len());
+                    format!("{}/{total}", visible.with(|v| v.len()))
                 }))
                 .child(icon_button(icons::xmark, style::negative, {
                     let m = m.clone();
@@ -181,20 +165,45 @@ pub fn connections_tab(m: Model) -> impl IntoElement {
     let empty_m = m.clone();
     let rows_m = m.clone();
     view()
+        .flex_1()
         .gap(px(style::SPACE6))
         .child(controls)
         .child(when(
-            {
-                let visible = visible.clone();
-                move || visible().is_empty()
-            },
+            move || visible.with(|v| v.is_empty()),
             move || crate::ui_proxy::empty_card(empty_m.tr("ui.empty.connections")),
         ))
-        .child(view().child(each(visible, |c: &Connection| c.id.clone(), move |conn, index| {
-            view()
-                .child(when(move || index.get() > 0, separator))
-                .child(connection_row(rows_m.clone(), conn))
-        })))
+        .child(virtual_rows(visible, 52.0, move |conn| connection_row(rows_m.clone(), conn)))
+}
+
+/// `rows` as a list that draws only the rows on screen (the management
+/// window's lists): each row reads its item by position.
+fn virtual_rows<T, R>(rows: Memo<Vec<T>>, estimated: f32, row: impl Fn(ReadSignal<T>) -> R + Clone + 'static) -> impl IntoElement
+where
+    T: Clone + PartialEq + 'static,
+    R: IntoElement + 'static,
+{
+    virtual_list(move || rows.with(|r| r.len()), move |at: nsh_core::element::Position| {
+        let item = computed(move || rows.with(|r| r.get(at.index()).cloned()));
+        let row = row.clone();
+        view().child(when(
+            move || item.with(|i| i.is_some()),
+            move || {
+                let Some(first) = item.get_untracked() else { return view() };
+                let current = signal(first);
+                effect(move || {
+                    if let Some(next) = item.get() {
+                        if current.with_untracked(|c| *c != next) {
+                            current.set(next);
+                        }
+                    }
+                });
+                view().child(row(current.read_only()))
+            },
+        ))
+    })
+    .estimated_item_size(px(estimated))
+    .separator(separator)
+    .flex_1()
 }
 
 /// The row's icon and its color (ClashBar's `connectionVisual`).
@@ -357,7 +366,7 @@ fn connection_row(m: Model, conn: ReadSignal<Connection>) -> impl IntoElement {
                 .h(px(14.0))
                 .items_center()
                 .justify_center()
-                .tooltip(text({
+                .tooltip(crate::widgets::tip({
                     let m = m.clone();
                     move || m.tr("ui.action.close_connection")
                 }))
@@ -455,12 +464,11 @@ pub fn logs_tab(m: Model) -> impl IntoElement {
     let levels = signal(std::collections::HashSet::<LevelFilter>::new());
     let visible = {
         let m = m.clone();
-        move || {
+        computed(move || {
             let keyword = search.get().trim().to_lowercase();
             let (sources, levels) = (sources.get(), levels.get());
             m.logs.with(|logs| {
                 logs.iter()
-                    .take(data::LISTED_ROWS)
                     .filter(|e| sources.is_empty() || sources.contains(&e.source))
                     .filter(|e| levels.is_empty() || levels.contains(&level_filter(data::normalized_level(&e.level))))
                     .filter(|e| {
@@ -478,7 +486,7 @@ pub fn logs_tab(m: Model) -> impl IntoElement {
                     .cloned()
                     .collect::<Vec<_>>()
             })
-        }
+        })
     };
     let level_m = m.clone();
     let level_menu = view()
@@ -564,20 +572,14 @@ pub fn logs_tab(m: Model) -> impl IntoElement {
     let empty_m = m.clone();
     let rows_m = m.clone();
     view()
+        .flex_1()
         .gap(px(style::SPACE6))
         .child(controls)
         .child(when(
-            {
-                let visible = visible.clone();
-                move || visible().is_empty()
-            },
+            move || visible.with(|v| v.is_empty()),
             move || crate::ui_proxy::empty_card(empty_m.tr("ui.empty.logs")),
         ))
-        .child(view().child(each(visible, |e: &LogEntry| e.id, move |entry, index| {
-            view()
-                .child(when(move || index.get() > 0, separator))
-                .child(log_row(rows_m.clone(), entry))
-        })))
+        .child(virtual_rows(visible, 44.0, move |entry| log_row(rows_m.clone(), entry)))
 }
 
 fn source_label(m: &Model, source: LogSource) -> String {
@@ -617,11 +619,14 @@ fn log_row(m: Model, entry: ReadSignal<LogEntry>) -> impl IntoElement {
             ];
             let _ = popup_menu_at(items, e.page_position);
         })
+        // The level as a small dot (the tinted glyphs lose their marks).
         .child(
-            image(move || ImageSrc::from(level_presentation(level()).0))
-                .w(px(11.0))
-                .h(px(11.0))
-                .tint_color(move || level_presentation(level()).1),
+            view()
+                .w(px(7.0))
+                .h(px(7.0))
+                .mt(px(5.0))
+                .rounded(px(3.5))
+                .bg(move || level_presentation(level()).1),
         )
         .child(
             view()
