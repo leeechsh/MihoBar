@@ -113,11 +113,33 @@ jobs:
       GH_REPO: ${{ github.repository }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          # The history since the last tag, for the release notes.
+          fetch-depth: 0
 
       - uses: actions/download-artifact@v4
         with:
           path: dist
           merge-multiple: true
+
+      # What changed, shown in the app's update window and on the release
+      # page: the tag's message after its first line (`git tag -a v1.2.3
+      # -F notes.md`), else the commit subjects since the previous tag.
+      - name: Release notes
+        if: github.ref_type == 'tag'
+        run: |
+          git fetch --force --tags
+          notes="$RUNNER_TEMP/notes.md"
+          body="$(git tag -l --format='%(contents:body)' "$GITHUB_REF_NAME" | sed -e '/^-----BEGIN PGP/,$d')"
+          if [[ -n "${body//[[:space:]]/}" ]]; then
+            printf '%s\n' "$body" > "$notes"
+          else
+            prev="$(git describe --tags --abbrev=0 "$GITHUB_REF_NAME^" 2>/dev/null || true)"
+            range="${prev:+$prev..}$GITHUB_REF_NAME"
+            { echo "## What's changed"; echo; git log --no-merges --pretty='- %s' "$range" | grep -v '^- Version ' || true; } > "$notes"
+          fi
+          cat "$notes"
+          echo "NOTES=$notes" >> "$GITHUB_ENV"
 
       - name: Update manifest
         if: github.ref_type == 'tag'
@@ -133,7 +155,7 @@ jobs:
           curl -fsSL https://nsh.dev/install.sh | NSH_VERSION="$NSH_VERSION" sh
           key="$RUNNER_TEMP/updater.secret"
           printf '%s\n' "$NSH_UPDATER_KEY" > "$key"
-          "$HOME/.local/bin/nsh" update-manifest --entry . --key "$key" -o dist dist/*.zip
+          "$HOME/.local/bin/nsh" update-manifest --entry . --key "$key" --notes "$NOTES" -o dist dist/*.zip
           rm -f "$key"
           cat dist/latest.json
 
@@ -142,7 +164,7 @@ jobs:
         run: |
           gh release create "$GITHUB_REF_NAME" dist/* \
             --title "MihoBar ${GITHUB_REF_NAME#v}" \
-            --generate-notes \
+            --notes-file "$NOTES" \
             --latest
 
       - name: Alpha pre-release

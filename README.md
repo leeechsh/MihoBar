@@ -42,6 +42,18 @@ secret), from which installed copies update themselves (Settings → Updates):
 git tag v0.2.0 && git push origin v0.2.0   # release 0.2.0 (the tag's version goes into the bundle)
 ```
 
+The release notes, shown in the app's update window and on the release
+page, are the tag's message after its first line; a tag without notes gets
+the commit subjects since the previous tag. Write them in Markdown and keep
+`#` headings with `--cleanup=verbatim` (git drops `#` lines otherwise):
+
+```bash
+git tag -a v0.2.2 --cleanup=verbatim -F notes.md && git push origin v0.2.2
+```
+
+Bump `version` in `nsh.json` and `Cargo.toml` with each release, so local
+builds report the version they are.
+
 Running the workflow by hand (Actions → Release → Run workflow) replaces
 the `alpha` pre-release with a build of the chosen branch.
 
