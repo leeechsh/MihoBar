@@ -3,6 +3,7 @@
 
 pub mod api;
 pub mod config;
+pub mod conns;
 pub mod core;
 pub mod data;
 pub mod features;
@@ -29,6 +30,10 @@ pub mod ui_proxy;
 pub mod ui_settings;
 pub mod ui_manager;
 pub mod ui_tabs;
+pub mod ui_zconns;
+pub mod ui_zlogs;
+pub mod ui_zrules;
+pub mod usage;
 #[cfg(target_os = "macos")]
 pub mod wifi;
 /// The Wi-Fi permission states (also where there is no Wi-Fi module).
@@ -79,7 +84,7 @@ fn advanced_app(launch: crate::model::AdvancedLaunch) -> impl IntoElement {
     bar.style = TitleBarStyle::Hidden;
     a.title_bar = Some(bar);
     a.frame = Some(WindowFrameStyle::Default);
-    a.min_size = Some(Some(size(Points(620.0), Points(420.0))));
+    a.min_size = Some(Some(size(Points(crate::ui_manager::MIN_WIDTH), Points(crate::ui_manager::MIN_HEIGHT))));
     a.resizable = Some(true);
     a.movable = Some(true);
     a.minimizable = Some(true);
@@ -92,12 +97,16 @@ fn advanced_app(launch: crate::model::AdvancedLaunch) -> impl IntoElement {
     a.transparent = Some(false);
     a.taskbar = Some(true);
     win.set(a);
+    // Centered on the main screen, kept inside it.
+    let screen = crate::geometry::visible_frame_at(f32::NAN);
+    let (w, h) = (crate::ui_manager::WIDTH.min(screen.w - 40.0), crate::ui_manager::HEIGHT.min(screen.h - 40.0));
     win.set_bounds(WindowFrame {
-        width: Some(Points(crate::ui_manager::WIDTH)),
-        height: Some(Points(crate::ui_manager::HEIGHT)),
+        x: Some(Points(screen.x + (screen.w - w) / 2.0)),
+        y: Some(Points(screen.y + (screen.h - h) / 2.0)),
+        width: Some(Points(w)),
+        height: Some(Points(h)),
         ..Default::default()
     });
-    win.center(None);
     win.focus();
     win.on_close_press(|_| nsh_core::element::desktop::quit());
     view().flex_1().child(crate::ui_manager::manager(m))
@@ -356,7 +365,7 @@ fn panel_app() -> impl IntoElement {
             .title(move || title_m.tr("ui.manager.title"))
             .attributes({
                 let mut a = nsh_core::desktop::WindowAttributes::default();
-                a.min_size = Some(Some(size(Points(620.0), Points(420.0))));
+                a.min_size = Some(Some(size(Points(crate::ui_manager::MIN_WIDTH), Points(crate::ui_manager::MIN_HEIGHT))));
                 // The sidebar runs up under the window's controls.
                 let mut bar = nsh_core::desktop::TitleBarOptions::default();
                 bar.style = nsh_core::desktop::TitleBarStyle::Hidden;

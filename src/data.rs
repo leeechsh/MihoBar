@@ -120,15 +120,14 @@ impl Connection {
 
 /// A snapshot's connections (the first 120) and how many it had.
 pub fn parse_connections(payload: &str) -> Option<(Vec<Connection>, usize)> {
-    #[derive(Deserialize)]
-    struct Snapshot {
-        #[serde(default)]
-        connections: Option<Vec<Value>>,
-    }
-    let s: Snapshot = serde_json::from_str(payload).ok()?;
-    let all = s.connections.unwrap_or_default();
-    let total = all.len();
-    Some((all.iter().take(RETAINED_CONNECTIONS).filter_map(Connection::from_value).collect(), total))
+    let snapshot: Value = serde_json::from_str(payload).ok()?;
+    Some(connections_of(&snapshot))
+}
+
+/// A parsed snapshot's connections (the first 120) and how many it had.
+pub fn connections_of(snapshot: &Value) -> (Vec<Connection>, usize) {
+    let all = snapshot.get("connections").and_then(Value::as_array).map(Vec::as_slice).unwrap_or(&[]);
+    (all.iter().take(RETAINED_CONNECTIONS).filter_map(Connection::from_value).collect(), all.len())
 }
 
 /// A rule's type and payload from its `rule` text: `Type(payload)` or

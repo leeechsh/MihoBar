@@ -23,6 +23,7 @@ libc = "0.2"
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
 tokio = { version = "1", features = ["sync", "time", "rt"] }
 tokio-tungstenite = { version = "0.28", default-features = false, features = ["connect", "handshake"] }
+regex = "1"
 
 # macOS only. Only SVG is on (the menu bar item is drawn as an SVG template);
 # the template's other features (shaders, editors, plots...) are left out.

@@ -130,18 +130,20 @@ impl AdvancedLaunch {
 /// The advanced window's sections, each mounted only while it shows.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ManagerSection {
-    Rules,
     Connections,
+    Usage,
     Logs,
+    Rules,
 }
 
 impl ManagerSection {
-    pub const ALL: [ManagerSection; 3] = [Self::Rules, Self::Connections, Self::Logs];
+    pub const ALL: [ManagerSection; 4] = [Self::Connections, Self::Usage, Self::Logs, Self::Rules];
 
     pub fn key(self) -> &'static str {
         match self {
             Self::Rules => "rules",
             Self::Connections => "connections",
+            Self::Usage => "usage",
             Self::Logs => "logs",
         }
     }
@@ -152,9 +154,10 @@ impl ManagerSection {
 
     pub fn title_key(self) -> &'static str {
         match self {
-            Self::Rules => "ui.tab.rules",
-            Self::Connections => "ui.tab.connections",
-            Self::Logs => "ui.tab.logs",
+            Self::Rules => "z.rules",
+            Self::Connections => "z.connections",
+            Self::Usage => "z.usage",
+            Self::Logs => "z.logs",
         }
     }
 }
@@ -290,6 +293,16 @@ struct Services {
     pub(crate) manager_window: RefCell<Option<nsh_core::element::desktop::WindowRef>>,
     /// This process is the advanced window's (see [`AdvancedLaunch`]).
     advanced: bool,
+    /// Usage counting (the menu bar process only; see `usage`).
+    usage: RefCell<Option<crate::usage::Recorder>>,
+    /// The connections stream's interval, ms (0: closed).
+    connections_interval: std::cell::Cell<u64>,
+    /// The advanced window's speeds and closed connections.
+    z_tracker: RefCell<crate::conns::Tracker>,
+    /// Log lines waiting for the next flush (every 500 ms), and the next
+    /// line's number.
+    z_log_pending: RefCell<Vec<crate::conns::ZLog>>,
+    z_log_seq: std::cell::Cell<u64>,
     /// The advanced window's process, started from the panel's.
     advanced_child: RefCell<Option<std::process::Child>>,
 }
@@ -313,6 +326,20 @@ pub struct Model {
     /// The management window is open, showing `manager_section`.
     pub manager_open: Signal<bool>,
     pub manager_section: Signal<ManagerSection>,
+    /// The menu bar process counts usage (the usage settings' tracking).
+    pub usage_tracking: Signal<bool>,
+    /// The core's upload and download since it started (bytes).
+    pub connection_totals: Signal<(u64, u64)>,
+    /// The advanced window's connections: active, closed (the last 500),
+    /// frozen while paused.
+    pub z_active: Signal<Rc<Vec<crate::conns::Conn>>>,
+    pub z_closed: Signal<Rc<Vec<crate::conns::Conn>>>,
+    pub z_paused: Signal<bool>,
+    /// The advanced window's core logs, newest first.
+    pub z_logs: Signal<Rc<Vec<crate::conns::ZLog>>>,
+    pub z_logs_paused: Signal<bool>,
+    /// The advanced window's own settings (`state/advanced.json`).
+    pub z_settings: Signal<crate::conns::AdvancedSettings>,
     pub history: Signal<TrafficHistory>,
     pub connections_count: Signal<usize>,
     pub groups: Signal<Vec<crate::proxy::ProxyGroup>>,
@@ -402,6 +429,7 @@ impl Model {
         let bootstrap_error = wd.bootstrap().err();
         let seed_error = config::seed_default_config(&wd).err();
         let settings_path = wd.state_dir().join("settings.json");
+        let wd_state = wd.state_dir();
         let settings = Settings::load(&settings_path);
         let (tx, mut rx) = unbounded_channel();
         let core = CoreProcess::new(wd.clone(), bundled_core_path(), tx);
@@ -410,6 +438,8 @@ impl Model {
             crate::core::install_termination_handler(&wd.logs_dir().join("signals.log"));
         }
         let app_log_file = crate::data::LogFile::open(wd.logs_dir().join("mihobar.log"));
+        let usage = (!advanced).then(|| crate::usage::Recorder::new(wd.root().join("usage")));
+        let usage_tracking = usage.as_ref().is_some_and(crate::usage::Recorder::tracking);
         let mihomo_log_file = crate::data::LogFile::open(wd.logs_dir().join("mihomo.log"));
         let services = Rc::new(Services {
             wd,
@@ -426,6 +456,11 @@ impl Model {
             manager_window: RefCell::new(None),
             advanced,
             advanced_child: RefCell::new(None),
+            usage: RefCell::new(usage),
+            connections_interval: std::cell::Cell::new(0),
+            z_tracker: RefCell::new(Default::default()),
+            z_log_pending: RefCell::new(Vec::new()),
+            z_log_seq: std::cell::Cell::new(1),
         });
         let model = Model {
             settings: signal(settings),
@@ -443,6 +478,14 @@ impl Model {
             tab: signal(RootTab::Proxy),
             panel_visible: signal(false),
             manager_open: signal(false),
+            usage_tracking: signal(usage_tracking),
+            connection_totals: signal((0, 0)),
+            z_active: signal(Rc::new(Vec::new())),
+            z_closed: signal(Rc::new(Vec::new())),
+            z_paused: signal(false),
+            z_logs: signal(Rc::new(Vec::new())),
+            z_logs_paused: signal(false),
+            z_settings: signal(if advanced { crate::conns::AdvancedSettings::load(&wd_state.join("advanced.json")) } else { Default::default() }),
             manager_section: signal(ManagerSection::Connections),
             history: signal(TrafficHistory::default()),
             connections_count: signal(0),
@@ -553,13 +596,26 @@ impl Model {
                 let tab = m.tab.get();
                 let section = m.manager_open.get().then(|| m.manager_section.get());
                 let speed_shown = m.settings.with(|s| s.status_bar_display_mode != crate::settings::StatusBarDisplayMode::IconOnly);
-                let level = m.log_level.get();
+                // The advanced window's logs come at its own level.
+                let level = if m.services.advanced || m.manager_open.get() { m.z_settings.with(|s| s.log_level.clone()) } else { m.log_level.get() };
+                let tracking = m.usage_tracking.get();
                 untracked(|| {
                     let nodes_shown = panel && tab == RootTab::Proxy;
-                    m.sync_stream("traffic", running && !m.services.advanced && (panel || speed_shown));
-                    m.sync_stream("memory", running && nodes_shown);
-                    // The node tab shows the count; the connections section the list.
-                    m.sync_stream("connections", running && (nodes_shown || section == Some(ManagerSection::Connections)));
+                    let advanced = m.services.advanced;
+                    // The advanced window's sidebar shows the speeds and memory.
+                    m.sync_stream("traffic", running && (advanced || panel || speed_shown));
+                    m.sync_stream("memory", running && (advanced || nodes_shown));
+                    // The node tab shows the count, the connections section the
+                    // list, the advanced window's sidebar the count; usage is
+                    // counted from it every 5 s when nothing shows it.
+                    let shown = nodes_shown || section == Some(ManagerSection::Connections) || advanced;
+                    let interval = if shown { 1000 } else { 5000 };
+                    let on = running && (shown || (tracking && !advanced));
+                    if on && m.services.connections_interval.get() != interval {
+                        m.sync_stream("connections", false);
+                        m.services.connections_interval.set(interval);
+                    }
+                    m.sync_stream("connections", on);
                     let logs_on = running && section == Some(ManagerSection::Logs);
                     let level = crate::data::stream_log_level(&level);
                     if logs_on && *m.services.logs_stream_level.borrow() != level {
@@ -610,7 +666,7 @@ impl Model {
                         match section {
                             Some(ManagerSection::Rules) => m.refresh_providers_and_rules().await,
                             Some(ManagerSection::Connections) => m.refresh_connections().await,
-                            Some(ManagerSection::Logs) | None => {}
+                            Some(ManagerSection::Logs | ManagerSection::Usage) | None => {}
                         }
                     });
                 });
@@ -658,8 +714,31 @@ impl Model {
         }
 
         if let Some(launch) = launch {
+            // Its settings are saved as they change.
+            let m = model.clone();
+            let path = m.services.wd.state_dir().join("advanced.json");
+            effect(move || m.z_settings.with(|s| s.save(&path)));
             model.start_advanced(launch);
             return model;
+        }
+
+        // Usage: buffered buckets are written and the advanced window's
+        // settings (tracking, retention, clearing) followed every 30 s, also
+        // while the stream is closed.
+        {
+            let m = model.clone();
+            run_root(async move {
+                loop {
+                    timer(Duration::from_secs(30)).await;
+                    let tracking = m.services.usage.borrow_mut().as_mut().map(|usage| {
+                        usage.flush(crate::format::now_secs());
+                        usage.tracking()
+                    });
+                    if let Some(tracking) = tracking.filter(|t| *t != m.usage_tracking.get_untracked()) {
+                        m.usage_tracking.set(tracking);
+                    }
+                }
+            });
         }
 
         model.seed_features_on_launch();
@@ -768,6 +847,52 @@ impl Model {
                 logs.push_front(e);
             }
         });
+    }
+
+    /// A core log line for the advanced window: numbered, batched every
+    /// 500 ms (zashboard's throttled flush), dropped while paused.
+    fn push_z_log(&self, level: String, payload: String) {
+        let seq = self.services.z_log_seq.get();
+        self.services.z_log_seq.set(seq + 1);
+        if self.z_logs_paused.get_untracked() {
+            return;
+        }
+        let p = crate::format::local_parts(crate::format::now_secs());
+        let time = format!("{:02}:{:02}:{:02}", p.3, p.4, p.5);
+        let first = {
+            let mut pending = self.services.z_log_pending.borrow_mut();
+            pending.push(crate::conns::ZLog { seq, level, time, payload });
+            pending.len() == 1
+        };
+        if first {
+            let m = self.clone();
+            run_root(async move {
+                timer(Duration::from_millis(500)).await;
+                let pending = std::mem::take(&mut *m.services.z_log_pending.borrow_mut());
+                let keep = m.z_settings.with_untracked(|s| s.log_retention.max(1));
+                m.z_logs.update(|logs| {
+                    let mut next: Vec<_> = pending.into_iter().rev().chain(logs.iter().cloned()).collect();
+                    next.truncate(keep);
+                    *logs = Rc::new(next);
+                });
+            });
+        }
+    }
+
+    /// The advanced window's pages are showing: its own process, or (out of
+    /// a bundle) its window in this one.
+    fn z_mode(&self) -> bool {
+        self.services.advanced || self.manager_open.get_untracked()
+    }
+
+    /// The interface is in Chinese.
+    pub fn is_zh(&self) -> bool {
+        self.settings.with_untracked(|s| s.ui_language) == AppLanguage::ZhHans
+    }
+
+    /// Where usage is recorded (see `usage`).
+    pub fn usage_dir(&self) -> PathBuf {
+        self.services.wd.root().join("usage")
     }
 
     /// The management window as it opens (and `None` as it closes).
@@ -1273,6 +1398,9 @@ impl Model {
         // Leaves a trace of every quit (a menu press, ⌘Q, logout).
         self.log_app("info", format!("Mihobar quitting (pid {})", std::process::id()));
         self.close_advanced_process();
+        if let Some(usage) = self.services.usage.borrow_mut().as_mut() {
+            usage.flush(crate::format::now_secs());
+        }
         self.prepare_quit_features().await;
         self.stop_streams();
         let core = self.services.core.clone();
@@ -1365,6 +1493,11 @@ impl Model {
                 if key == "logs" {
                     *self.services.logs_stream_level.borrow_mut() = None;
                 }
+                if key == "connections" {
+                    if let Some(usage) = self.services.usage.borrow_mut().as_mut() {
+                        usage.restart();
+                    }
+                }
             }
             return;
         }
@@ -1425,16 +1558,25 @@ impl Model {
                 }
             }),
             "connections" => {
-                let url = target.ws_url("/connections", &[("interval", "1000".to_owned())]);
+                let interval = self.services.connections_interval.get().max(1000);
+                let url = target.ws_url("/connections", &[("interval", interval.to_string())]);
                 self.open_stream(key, url, move |payload: &str| m.apply_connections_payload(payload));
             }
             "logs" => {
-                let level = crate::data::stream_log_level(&self.log_level.get_untracked());
+                let level = if self.z_mode() {
+                    crate::data::stream_log_level(&self.z_settings.with_untracked(|s| s.log_level.clone()))
+                } else {
+                    crate::data::stream_log_level(&self.log_level.get_untracked())
+                };
                 let query: Vec<(&str, String)> = level.iter().map(|l| ("level", l.clone())).collect();
                 *self.services.logs_stream_level.borrow_mut() = level;
                 self.open_stream(key, target.ws_url("/logs", &query), move |payload: &str| {
                     if let Some((level, message)) = crate::data::decode_log_payload(payload) {
-                        m.log_mihomo(&level, message);
+                        if m.z_mode() {
+                            m.push_z_log(level, message);
+                        } else {
+                            m.log_mihomo(&level, message);
+                        }
                     }
                 });
             }
@@ -1443,7 +1585,45 @@ impl Model {
     }
 
     fn apply_connections_payload(&self, payload: &str) {
-        if let Some((list, total)) = crate::data::parse_connections(payload) {
+        let Ok(snapshot) = serde_json::from_str::<serde_json::Value>(payload) else { return };
+        let tracking = match self.services.usage.borrow_mut().as_mut() {
+            Some(usage) => {
+                usage.observe(&snapshot, crate::format::now_secs());
+                Some(usage.tracking())
+            }
+            None => None,
+        };
+        if let Some(tracking) = tracking.filter(|t| *t != self.usage_tracking.get_untracked()) {
+            self.usage_tracking.set(tracking);
+        }
+        let totals = (
+            snapshot.get("uploadTotal").and_then(serde_json::Value::as_u64).unwrap_or(0),
+            snapshot.get("downloadTotal").and_then(serde_json::Value::as_u64).unwrap_or(0),
+        );
+        if self.connection_totals.get_untracked() != totals {
+            self.connection_totals.set(totals);
+        }
+        if self.z_mode() {
+            let before = self.z_active.get_untracked();
+            let (active, closed) = self.services.z_tracker.borrow_mut().apply(&snapshot, &before);
+            if self.connections_count.get_untracked() != active.len() {
+                self.connections_count.set(active.len());
+            }
+            if !self.z_paused.get_untracked() {
+                self.z_active.set(Rc::new(active));
+                if !closed.is_empty() {
+                    self.z_closed.update(|all| {
+                        let mut next: Vec<_> = all.iter().cloned().chain(closed).collect();
+                        let excess = next.len().saturating_sub(crate::conns::CLOSED_KEPT);
+                        next.drain(..excess);
+                        *all = Rc::new(next);
+                    });
+                }
+            }
+            return;
+        }
+        {
+            let (list, total) = crate::data::connections_of(&snapshot);
             if self.connections_count.get_untracked() != total {
                 self.connections_count.set(total);
             }

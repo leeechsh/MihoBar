@@ -1329,6 +1329,7 @@ dependencies = [
  "objc2-core-location",
  "objc2-core-wlan",
  "objc2-foundation",
+ "regex",
  "serde",
  "serde_json",
  "tokio",

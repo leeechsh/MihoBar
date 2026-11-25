@@ -146,3 +146,52 @@ pub fn latency(tone: crate::proxy::LatencyTone) -> AdaptiveColor {
         Slow => warning(),
     }
 }
+
+/// The advanced window's palette: zashboard's light and dark themes.
+pub mod z {
+    use nsh_core::prelude::AdaptiveColor;
+
+    fn c(light: u32, light_alpha: f32, dark: u32, dark_alpha: f32) -> AdaptiveColor {
+        super::c(light, light_alpha, dark, dark_alpha)
+    }
+
+    /// `base-200`: the page under the cards.
+    pub fn page() -> AdaptiveColor {
+        c(0xf5f5f7, 1.0, 0x000000, 1.0)
+    }
+    /// `base-200` at `alpha` (toolbars, table headers).
+    pub fn base200(alpha: f32) -> AdaptiveColor {
+        c(0xf5f5f7, alpha, 0x000000, alpha)
+    }
+    /// `base-100`: cards.
+    pub fn card() -> AdaptiveColor {
+        c(0xffffff, 1.0, 0x1d1d1f, 1.0)
+    }
+    /// `base-300` at `alpha` (borders).
+    pub fn base300(alpha: f32) -> AdaptiveColor {
+        c(0xd2d2d7, alpha, 0x424245, alpha)
+    }
+    /// `base-content` at `alpha` (text; 0.6 for muted).
+    pub fn text(alpha: f32) -> AdaptiveColor {
+        c(0x1d1d1f, alpha, 0xf5f5f7, alpha)
+    }
+    pub fn primary(alpha: f32) -> AdaptiveColor {
+        c(0x454a51, alpha, 0xf5f5f7, alpha)
+    }
+    pub fn primary_content() -> AdaptiveColor {
+        c(0xffffff, 1.0, 0x1d1d1f, 1.0)
+    }
+    pub fn error() -> AdaptiveColor {
+        c(0xff3b30, 1.0, 0xff453a, 1.0)
+    }
+    pub fn success() -> AdaptiveColor {
+        c(0x34c759, 1.0, 0x30d158, 1.0)
+    }
+    pub fn info() -> AdaptiveColor {
+        c(0x5ac8fa, 1.0, 0x64d2ff, 1.0)
+    }
+    pub fn warning() -> AdaptiveColor {
+        c(0xff9500, 1.0, 0xff9f0a, 1.0)
+    }
+}
+

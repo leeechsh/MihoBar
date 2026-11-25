@@ -213,3 +213,96 @@ mod tests {
         assert_eq!(expiry(Some(86400 * 3 + 10), 0), Expiry::Days(3));
     }
 }
+
+/// `parse_iso8601` in milliseconds.
+pub fn parse_iso8601_ms(input: &str) -> Option<i64> {
+    parse_iso8601(input).map(|s| s * 1000)
+}
+
+/// How long ago `at_ms` was, as dayjs's `fromNow` puts it (zashboard's
+/// connect time): "seconds ago", "6 minutes ago", "3 hours ago".
+pub fn from_now(at_ms: i64, now_ms: i64, zh: bool) -> String {
+    if at_ms <= 0 {
+        return "-".into();
+    }
+    let s = ((now_ms - at_ms) / 1000).max(0);
+    let (n, unit) = match s {
+        s if s < 45 => return if zh { "几秒前".into() } else { "seconds ago".into() },
+        s if s < 90 => (1, 0),
+        s if s < 45 * 60 => ((s + 30) / 60, 0),
+        s if s < 90 * 60 => (1, 1),
+        s if s < 22 * 3600 => ((s + 1800) / 3600, 1),
+        s if s < 36 * 3600 => (1, 2),
+        s => ((s + 43200) / 86400, 2),
+    };
+    if zh {
+        let unit = ["分钟", "小时", "天"][unit];
+        format!("{n} {unit}前")
+    } else {
+        let unit = ["minute", "hour", "day"][unit];
+        match (n, unit) {
+            (1, "hour") => "an hour ago".into(),
+            (1, u) => format!("a {u} ago"),
+            (n, u) => format!("{n} {u}s ago"),
+        }
+    }
+}
+
+/// Local (year, month, day, hour, minute, second) of Unix seconds `t`.
+pub fn local_parts(t: i64) -> (i32, i32, i32, i32, i32, i32) {
+    let secs = t as libc::time_t;
+    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+    // SAFETY: valid pointers; localtime_r fills tm.
+    unsafe { libc::localtime_r(&secs, &mut tm) };
+    (tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec)
+}
+
+/// Bytes as zashboard shows them (pretty-bytes): decimal units, three
+/// significant digits ("41.7 MB", "899 kB", "99 B").
+pub fn pretty_bytes(bytes: u64) -> String {
+    const UNITS: [&str; 6] = ["B", "kB", "MB", "GB", "TB", "PB"];
+    if bytes < 1000 {
+        return format!("{bytes} B");
+    }
+    let mut value = bytes as f64;
+    let mut unit = 0;
+    while value >= 1000.0 && unit < UNITS.len() - 1 {
+        value /= 1000.0;
+        unit += 1;
+    }
+    let digits = if value >= 100.0 { 0 } else if value >= 10.0 { 1 } else { 2 };
+    let mut text = format!("{value:.digits$}");
+    if text.contains('.') {
+        text = text.trim_end_matches('0').trim_end_matches('.').to_owned();
+    }
+    // Rounding up to the next unit ("1000 kB").
+    if text == "1000" && unit < UNITS.len() - 1 {
+        return format!("1 {}", UNITS[unit + 1]);
+    }
+    format!("{text} {}", UNITS[unit])
+}
+
+/// `pretty_bytes` split into its number and unit.
+pub fn pretty_bytes_parts(bytes: u64) -> (String, String) {
+    let text = pretty_bytes(bytes);
+    match text.split_once(' ') {
+        Some((n, u)) => (n.to_owned(), u.to_owned()),
+        None => (text, String::new()),
+    }
+}
+
+#[cfg(test)]
+mod pretty_tests {
+    use super::pretty_bytes;
+
+    #[test]
+    fn like_pretty_bytes() {
+        assert_eq!(pretty_bytes(99), "99 B");
+        assert_eq!(pretty_bytes(1_740), "1.74 kB");
+        assert_eq!(pretty_bytes(899_000), "899 kB");
+        assert_eq!(pretty_bytes(4_400_000), "4.4 MB");
+        assert_eq!(pretty_bytes(41_700_000), "41.7 MB");
+        assert_eq!(pretty_bytes(999_999), "1 MB");
+    }
+}
+

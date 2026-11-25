@@ -96,6 +96,8 @@ pub enum Endpoint {
     Rules,
     RuleProviders,
     UpdateRuleProvider(String),
+    /// `{ "<index>": disabled }` (mihomo's rule switch).
+    DisableRules(Value),
     Connections,
     CloseAllConnections,
     CloseConnection(String),
@@ -108,7 +110,7 @@ pub enum Endpoint {
 impl Endpoint {
     fn method(&self) -> &'static str {
         match self {
-            Self::PatchConfigs(_) => "PATCH",
+            Self::PatchConfigs(_) | Self::DisableRules(_) => "PATCH",
             Self::PutConfigs { .. } | Self::SwitchProxy { .. } | Self::UpdateProxyProvider(_) | Self::UpdateRuleProvider(_) => "PUT",
             Self::CloseAllConnections | Self::CloseConnection(_) => "DELETE",
             Self::FlushFakeIpCache | Self::FlushDnsCache | Self::UpgradeCore | Self::UpgradeGeo => "POST",
@@ -129,6 +131,7 @@ impl Endpoint {
             Self::ProxyProviderHealthcheck { name, .. } => format!("/providers/proxies/{}/healthcheck", escape(name)),
             Self::Rules => "/rules".into(),
             Self::RuleProviders => "/providers/rules".into(),
+            Self::DisableRules(_) => "/rules/disable".into(),
             Self::UpdateRuleProvider(name) => format!("/providers/rules/{}", escape(name)),
             Self::Connections | Self::CloseAllConnections => "/connections".into(),
             Self::CloseConnection(id) => format!("/connections/{}", escape(id)),
@@ -153,7 +156,7 @@ impl Endpoint {
 
     fn body(&self) -> Option<Value> {
         match self {
-            Self::PatchConfigs(body) => Some(body.clone()),
+            Self::PatchConfigs(body) | Self::DisableRules(body) => Some(body.clone()),
             Self::PutConfigs { path, payload, .. } => {
                 Some(serde_json::json!({ "path": path, "payload": payload.clone().unwrap_or_default() }))
             }

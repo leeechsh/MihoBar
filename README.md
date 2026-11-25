@@ -58,13 +58,24 @@ python3 -m http.server 8765 --bind 127.0.0.1 --directory path/to/dir-with-sub.ya
 ## Layout
 
 The menu bar panel holds the node tab (traffic, outbound mode, configs,
-system proxy, TUN, proxy groups) and every setting. The rules, connections
-and logs are in a separate advanced window, opened from the panel's 高级
-button. In the app bundle that window is a process of its own, started by
-the panel (`MIHOBAR_ADVANCED` names its section) and reading the same core;
-closing it ends the process, so the panel's memory never grows with it.
-Outside a bundle (development, tests) it opens in the panel's process.
-Either way only the section on screen is mounted, with its stream and list.
+system proxy, TUN, proxy groups) and every setting. The 高级 button opens
+the advanced window, after [zashboard](https://github.com/leeechsh/zashboard)
+(leeechsh's fork): connections (table with chosen columns, sorting,
+grouping, regex search and hiding, details, pause, close all), usage
+(devices, inbound users, hosts, outbounds and processes over a range, with a
+traffic chart and details), logs (level, type, regex, download, pause) and
+rules (rules with sizes, hits, a switch each and their proxy chains; rule
+providers). In the app bundle that window is a process of its own, started
+by the panel (`MIHOBAR_ADVANCED` names its first page) and reading the same
+core; closing it ends the process. Outside a bundle (development, tests) it
+opens in the panel's process. Its settings are kept in `state/advanced.json`.
+
+Usage is counted by the menu bar process whenever the core runs: it reads
+the core's connections every 5 s (every second while something shows
+them), adds each connection's traffic to per-minute buckets and appends them
+to `usage/YYYY-MM-DD.tsv`. Days older than two are folded into hourly
+buckets; days past the retention (a month by default, set in the usage page)
+are deleted.
 
 ## Status
 
