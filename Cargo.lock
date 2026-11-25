@@ -1398,7 +1398,7 @@ dependencies = [
 
 [[package]]
 name = "mihobar"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "block2",
  "env_logger",
