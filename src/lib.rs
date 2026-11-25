@@ -1,4 +1,4 @@
-//! Mihobar: a native macOS menu bar client for mihomo, on NSH.
+//! MihoBar: a native macOS menu bar client for mihomo, on NSH.
 //! A port of ClashBar (https://github.com/Sitoi/ClashBar), GPL-3.0.
 
 pub mod api;
@@ -200,7 +200,7 @@ fn panel_app() -> impl IntoElement {
                     crate::icons::status_run()
                 };
                 let toggle = toggle.clone();
-                set_tray(tray().icon(icon).tooltip("Mihobar").on_click(move |click| {
+                set_tray(tray().icon(icon).tooltip("MihoBar").on_click(move |click| {
                     toggle(click.bounds.map(crate::geometry::Rect::from_bounds));
                 }));
                 return;
@@ -416,7 +416,7 @@ fn panel_app() -> impl IntoElement {
         let panel_ref = panel_ref.clone();
         let hide_unless_focused = hide_unless_focused.clone();
         let mut a = nsh_core::desktop::WindowAttributes::default();
-        a.title = Some("Mihobar".to_owned());
+        a.title = Some("MihoBar".to_owned());
         a.focusable = Some(true);
         a.movable = Some(false);
         a.close_on_press = Some(false);

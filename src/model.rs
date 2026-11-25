@@ -548,7 +548,7 @@ impl Model {
         if !advanced {
             model.log_app(
                 "info",
-                format!("Mihobar {} started (pid {})", env!("CARGO_PKG_VERSION"), std::process::id()),
+                format!("MihoBar {} started (pid {})", env!("CARGO_PKG_VERSION"), std::process::id()),
             );
         }
         if let Some(e) = bootstrap_error {
@@ -850,7 +850,7 @@ impl Model {
         });
     }
 
-    /// The logs page's history: the last lines of the core's and Mihobar's
+    /// The logs page's history: the last lines of the core's and MihoBar's
     /// log files at the page's level. The length of `mihobar.log` then.
     fn load_z_log_history(&self) -> u64 {
         let level = self.z_settings.with_untracked(|s| s.log_level.clone());
@@ -861,7 +861,7 @@ impl Model {
         app_len
     }
 
-    /// Mihobar's lines as the panel's process writes them to `mihobar.log`
+    /// MihoBar's lines as the panel's process writes them to `mihobar.log`
     /// (the advanced window is a process of its own), from `offset` on,
     /// checked every second. A shorter file was rotated: read from its start.
     fn follow_app_log(&self, mut offset: u64) {
@@ -898,7 +898,7 @@ impl Model {
         });
     }
 
-    /// A log line for the advanced window (the core's or Mihobar's, at the
+    /// A log line for the advanced window (the core's or MihoBar's, at the
     /// page's level): numbered, batched every 500 ms (zashboard's
     /// throttled flush), dropped while paused.
     fn push_z_log(&self, source: crate::conns::ZLogSource, at: i64, level: String, payload: String) {
@@ -1078,7 +1078,7 @@ impl Model {
             return;
         }
         log::info!("[mihobar {level}] {message}");
-        // The logs page shows Mihobar's lines beside the core's.
+        // The logs page shows MihoBar's lines beside the core's.
         if self.z_mode() {
             self.push_z_log(crate::conns::ZLogSource::App, crate::format::now_secs(), level.to_owned(), message.clone());
         }
@@ -1499,7 +1499,7 @@ impl Model {
     /// Stops the core and quits.
     pub async fn quit(&self) {
         // Leaves a trace of every quit (a menu press, ⌘Q, logout).
-        self.log_app("info", format!("Mihobar quitting (pid {})", std::process::id()));
+        self.log_app("info", format!("MihoBar quitting (pid {})", std::process::id()));
         self.close_advanced_process();
         if let Some(usage) = self.services.usage.borrow_mut().as_mut() {
             usage.flush(crate::format::now_secs());

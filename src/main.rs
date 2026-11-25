@@ -1,4 +1,4 @@
-//! Runs Mihobar on macOS's native backend.
+//! Runs MihoBar on macOS's native backend.
 
 #[cfg(target_os = "macos")]
 use nsh_platform_macos as platform;
@@ -9,7 +9,7 @@ fn main() -> impl std::process::Termination {
     platform::run_app(
         platform::AppSource::Rust(platform::Root::of::<mihobar::App>()),
         platform::AppOptions {
-            title: "Mihobar".to_owned(),
+            title: "MihoBar".to_owned(),
             app_id: "dev.mihobar.app".to_owned(),
             size: (360, 640),
             activation_policy: platform::ActivationPolicy::Accessory,
@@ -20,4 +20,4 @@ fn main() -> impl std::process::Termination {
 }
 
 #[cfg(not(target_os = "macos"))]
-compile_error!("Mihobar runs on macOS only.");
+compile_error!("MihoBar runs on macOS only.");

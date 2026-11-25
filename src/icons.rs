@@ -1,5 +1,5 @@
 //! Icons: SVG stand-ins for the SF Symbols ClashBar uses (drawn black,
-//! tinted where shown), and Mihobar's own brand marks for the menu bar.
+//! tinted where shown), and MihoBar's own brand marks for the menu bar.
 
 fn svg_doc(body: &str) -> String {
     format!(
@@ -160,7 +160,7 @@ icons! {
     doc_text => "<path d='M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z'/><path d='M14 2v6h6'/><path d='M8 13h8M8 17h5'/>";
 }
 
-/// Mihobar's cat (an original drawing): its head with pointed ears.
+/// MihoBar's cat (an original drawing): its head with pointed ears.
 const CAT_HEAD: &str = "M4.2 10.2L4.8 3.4L9.3 6.9Q12 6.1 14.7 6.9L19.2 3.4L19.8 10.2Q21 12.1 21 14.2C21 18.4 17.2 21 12 21C6.8 21 3 18.4 3 14.2Q3 12.1 4.2 10.2Z";
 
 /// The brand mark (header logo): the cat, with open eyes.

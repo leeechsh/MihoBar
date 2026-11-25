@@ -1,4 +1,4 @@
-# Builds Mihobar for Apple silicon and Intel and publishes them:
+# Builds MihoBar for Apple silicon and Intel and publishes them:
 #   a tag v*        -> the release of that version (the latest)
 #   run by hand     -> the rolling "alpha" pre-release, from the branch run
 # Each build is signed ad hoc (no Developer ID yet): see README's Install.
@@ -76,17 +76,17 @@ jobs:
 
       - name: Check architecture
         run: |
-          lipo -archs .nsh/out/Mihobar.app/Contents/MacOS/Mihobar | grep -qw ${{ matrix.arch }}
-          lipo -archs .nsh/out/Mihobar.app/Contents/Library/HelperTools/dev.mihobar.helper | grep -qw ${{ matrix.arch }}
+          lipo -archs .nsh/out/MihoBar.app/Contents/MacOS/MihoBar | grep -qw ${{ matrix.arch }}
+          lipo -archs .nsh/out/MihoBar.app/Contents/Library/HelperTools/dev.mihobar.helper | grep -qw ${{ matrix.arch }}
 
       - name: Zip and disk image
         run: |
-          name="Mihobar-${{ steps.version.outputs.version }}-${{ matrix.arch }}"
+          name="MihoBar-${{ steps.version.outputs.version }}-${{ matrix.arch }}"
           mkdir -p dist dmg
-          ditto -c -k --sequesterRsrc --keepParent .nsh/out/Mihobar.app "dist/$name.zip"
-          ditto .nsh/out/Mihobar.app dmg/Mihobar.app
+          ditto -c -k --sequesterRsrc --keepParent .nsh/out/MihoBar.app "dist/$name.zip"
+          ditto .nsh/out/MihoBar.app dmg/MihoBar.app
           ln -s /Applications dmg/Applications
-          hdiutil create -volname Mihobar -srcfolder dmg -ov -format UDZO "dist/$name.dmg"
+          hdiutil create -volname MihoBar -srcfolder dmg -ov -format UDZO "dist/$name.dmg"
           (cd dist && shasum -a 256 *.zip *.dmg > "$name.sha256")
 
       - uses: actions/upload-artifact@v4
@@ -112,7 +112,7 @@ jobs:
         if: github.ref_type == 'tag'
         run: |
           gh release create "$GITHUB_REF_NAME" dist/* \
-            --title "Mihobar ${GITHUB_REF_NAME#v}" \
+            --title "MihoBar ${GITHUB_REF_NAME#v}" \
             --generate-notes \
             --latest
 
@@ -122,6 +122,6 @@ jobs:
           gh release delete alpha --yes --cleanup-tag || true
           gh release create alpha dist/* \
             --target "$GITHUB_SHA" \
-            --title "Mihobar Alpha" \
+            --title "MihoBar Alpha" \
             --notes "Built from ${GITHUB_REF_NAME} at ${GITHUB_SHA::7} (run ${GITHUB_RUN_NUMBER})." \
             --prerelease

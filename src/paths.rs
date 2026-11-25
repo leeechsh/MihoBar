@@ -1,7 +1,7 @@
 //! The app's working directory (ClashBar's `WorkingDirectoryManager`):
 //! NSH's data directory for the app (`data_dir()`), which `nsh.json`'s
 //! `"dataDir"` keeps at `~/Library/Application Support/mihobar` (where
-//! Mihobar always kept it; NSH's own default would be a folder named after
+//! MihoBar always kept it; NSH's own default would be a folder named after
 //! the app id, `dev.mihobar.app`, which Finder takes for an app), and its
 //! subdirectories.
 
@@ -83,7 +83,7 @@ impl WorkingDirectory {
         } else {
             Err(io::Error::new(
                 io::ErrorKind::PermissionDenied,
-                format!("Path escapes Mihobar working directory: {}", normalized.display()),
+                format!("Path escapes MihoBar working directory: {}", normalized.display()),
             ))
         }
     }

@@ -503,7 +503,7 @@ pub fn grouped(rows: Vec<Conn>, column: Column, expanded: &std::collections::Has
 }
 
 /// Where a log line came from: the core (its stream, or `mihomo.log`) or
-/// Mihobar itself (`mihobar.log`).
+/// MihoBar itself (`mihobar.log`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ZLogSource {
     #[default]
@@ -522,7 +522,7 @@ impl ZLogSource {
 }
 
 /// A log line as the logs page lists it (zashboard's `LogWithSeq`), the
-/// core's or Mihobar's.
+/// core's or MihoBar's.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ZLog {
     pub seq: u64,
@@ -542,7 +542,7 @@ impl ZLog {
     }
 
     /// Its type: the payload's bracketed first word (`[TCP]`, `[DNS]`...);
-    /// none for Mihobar's own lines.
+    /// none for MihoBar's own lines.
     pub fn kind(&self) -> &str {
         let first = self.payload.split(' ').next().unwrap_or("");
         if first.starts_with('[') && first.ends_with(']') { first } else { "" }
@@ -582,7 +582,7 @@ pub fn filter_logs(logs: &[ZLog], source: &str, type_filter: &str, search: &str,
         .collect()
 }
 
-/// A line of `mihomo.log`: the core's stdout as Mihobar wrote it
+/// A line of `mihomo.log`: the core's stdout as MihoBar wrote it
 /// (`[date time] [INFO] time="…" level=warning msg="[TCP] …"`), read as
 /// the stream gives it: the core's own level and message.
 pub fn parse_core_file_line(line: &str) -> Option<(i64, String, String)> {

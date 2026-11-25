@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 license = "GPL-3.0-only"
 publish = false
-description = "Mihobar's privileged helper: sets the macOS system proxy for Mihobar over XPC (a port of ClashBar's ProxyHelper)."
+description = "MihoBar's privileged helper: sets the macOS system proxy for MihoBar over XPC (a port of ClashBar's ProxyHelper)."
 
 # Built on its own (it runs as root, apart from the app).
 [workspace]

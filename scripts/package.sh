@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Builds .nsh/out/Mihobar.app with its privileged helper inside
+# Builds .nsh/out/MihoBar.app with its privileged helper inside
 # (Contents/Library/HelperTools and LaunchDaemons, as ClashBar's bundle
 # carries com.clashbar.helper), signed ad hoc with the identifiers the
 # helper and the app check: dev.mihobar.app and dev.mihobar.helper.
@@ -8,7 +8,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 IDENTITY="${SIGN_IDENTITY:--}"
-APP="$ROOT/.nsh/out/Mihobar.app"
+APP="$ROOT/.nsh/out/MihoBar.app"
 
 [ -f "$ROOT/assets/bin/mihomo.gz" ] || "$ROOT/scripts/fetch-mihomo.sh"
 
@@ -41,10 +41,10 @@ PLIST
 # Wi-Fi auto-switch reads the Wi-Fi name, which needs the location
 # permission and its reason (as ClashBar's Info.plist has).
 # nsh-extra's location feature adds a generic NSLocationUsageDescription:
-# both keys say what Mihobar uses it for.
+# both keys say what MihoBar uses it for.
 for key in NSLocationWhenInUseUsageDescription NSLocationUsageDescription; do
   /usr/libexec/PlistBuddy -c "Delete :$key" "$APP/Contents/Info.plist" 2>/dev/null || true
-  /usr/libexec/PlistBuddy -c "Add :$key string 'Mihobar uses your current Wi-Fi name to switch proxy config profiles automatically.'" "$APP/Contents/Info.plist"
+  /usr/libexec/PlistBuddy -c "Add :$key string 'MihoBar uses your current Wi-Fi name to switch proxy config profiles automatically.'" "$APP/Contents/Info.plist"
 done
 
 codesign --force --sign "$IDENTITY" --identifier dev.mihobar.helper --options runtime "$HELPER_DIR/dev.mihobar.helper"

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Downloads the mihomo core (MetaCubeX/mihomo) that Mihobar ships as
+# Downloads the mihomo core (MetaCubeX/mihomo) that MihoBar ships as
 # assets/bin/mihomo.gz, as ClashBar's Scripts/preprocess.sh does.
 #   MIHOMO_VERSION=v1.19.x  pin a release (default: the latest)
 #   TARGET_ARCH=arm64|x86_64 (default: this Mac's)

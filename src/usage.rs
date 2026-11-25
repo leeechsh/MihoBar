@@ -2,7 +2,7 @@
 //! much each device, host, outbound, process and inbound user moved.
 //!
 //! zashboard counts only while its page is open and keeps the counts in
-//! the browser. Mihobar's menu bar process counts whenever its core runs:
+//! the browser. MihoBar's menu bar process counts whenever its core runs:
 //! it reads the core's connections every few seconds, adds each
 //! connection's traffic since the last reading to a per-minute bucket, and
 //! appends the buckets to one file a day under `usage/`. Files older than

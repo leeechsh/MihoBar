@@ -21,7 +21,7 @@ const stopped = (app) => app.waitUntil(() => app.count("启动内核") > 0, { ti
 test("shows the panel's sections", async () => {
   const app = await open(".", { platform: "macos" });
   const texts = app.texts();
-  for (const label of ["Mihobar", "出站模式", "节点", "设置", "高级"]) {
+  for (const label of ["MihoBar", "出站模式", "节点", "设置", "高级"]) {
     expect(texts).toContain(label);
   }
   // The proxy tab: quick rows and the (still empty) groups.

@@ -317,14 +317,14 @@ mod tests {
         assert_eq!(display("::1", &p).as_deref(), Some("[::1]:2333"));
         assert_eq!(shell_quoted("a'b"), "'a'\"'\"'b'");
         assert_eq!(apple_script_escaped(r#"a"b\c"#), r#"a\"b\\c"#);
-        let script = install_command("/Applications/Mihobar.app/x", "/Applications/Mihobar.app/y");
+        let script = install_command("/Applications/MihoBar.app/x", "/Applications/MihoBar.app/y");
         assert!(script.contains("/bin/launchctl bootstrap system '/Library/LaunchDaemons/dev.mihobar.helper.plist'"));
         assert!(script.ends_with("echo 1 > '/Library/PrivilegedHelperTools/dev.mihobar.helper.version'"));
     }
 
     #[test]
     fn helper_not_installed_here() {
-        // On a Mac without Mihobar's helper: not ready, nothing installed.
+        // On a Mac without MihoBar's helper: not ready, nothing installed.
         if !installed_helper_is_current() {
             assert_eq!(ensure_helper_ready(false), Err(Error::HelperNotRegistered));
             assert_eq!(is_enabled(), Err(Error::HelperNotRegistered));

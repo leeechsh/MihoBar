@@ -1,5 +1,5 @@
 //! The advanced window's logs page (zashboard's): the core's and
-//! Mihobar's log lines at the page's own level, newest first (the last
+//! MihoBar's log lines at the page's own level, newest first (the last
 //! lines of their files, then live), by source, level or type, searched
 //! with a regex, some hidden by another; download, pause, clear.
 
