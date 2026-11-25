@@ -58,6 +58,12 @@ pub fn is_supported_url(url: &str) -> bool {
 
 /// `自动 2 小时 5 分后 · 上次 10:20` (ClashBar's `remoteConfigMenuStatusLine`).
 pub fn status_line(m: &Model, sub: &RemoteSubscription, last_update: Option<i64>, now: i64) -> Option<String> {
+    // The last check, not only the last change: an unchanged download
+    // counts as a check.
+    let last_update = match (last_update, sub.last_check) {
+        (Some(a), Some(b)) => Some(a.max(b)),
+        (a, b) => a.or(b),
+    };
     let mut parts = Vec::new();
     if let Some(next) = sub.next_update_at().filter(|_| sub.auto_update) {
         let remaining = (next - now).max(0);
@@ -223,7 +229,11 @@ impl Model {
         match result {
             Ok(wrote) => {
                 self.set_remote_phase(&file, RemotePhase::Idle);
+                if !wrote {
+                    self.log_app("info", self.tr_args("log.config.remote.up_to_date", &[&file]));
+                }
                 if wrote {
+                    self.log_app("info", self.tr_args("log.config.remote.updated", &[&file]));
                     self.reload_configs();
                     if self.should_reload_after(&[file.clone()]) {
                         self.reload_config().await;
@@ -241,9 +251,13 @@ impl Model {
     pub async fn update_all_remote_configs(&self) {
         let files: Vec<String> = self.settings.with_untracked(|s| s.remote_subscriptions.keys().cloned().collect());
         if files.is_empty() {
-            self.log_app("info", self.tr_args("log.config.remote.no_sources", &[]));
+            let text = self.tr_args("log.config.remote.no_sources", &[]);
+            self.log_app("info", text.clone());
+            self.config_feedback_show(text, false);
             return;
         }
+        self.config_busy.set(Some("ui.quick.update_remote_configs"));
+        let total = files.len();
         let (mut updated, mut failed) = (Vec::new(), 0);
         for file in files {
             let before = self.config_modified_at(&file);
@@ -254,7 +268,12 @@ impl Model {
                 _ => {}
             }
         }
-        self.log_app("info", self.tr_args("log.config.remote.update_summary", &[&updated.len(), &failed]));
+        // Downloaded: changed or already up to date.
+        let ok = total.saturating_sub(failed);
+        let text = self.tr_args("log.config.remote.update_result", &[&ok, &updated.len(), &failed]);
+        self.log_app("info", text.clone());
+        self.config_busy.set(None);
+        self.config_feedback_show(text, failed > 0);
     }
 
     /// Deletes a config after asking (ClashBar's `deleteConfigFile`).

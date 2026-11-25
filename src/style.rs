@@ -9,6 +9,32 @@ pub const SPACE2: f32 = 2.0;
 pub const SPACE4: f32 = 4.0;
 pub const SPACE6: f32 = 6.0;
 pub const SPACE8: f32 = 8.0;
+/// The corners, concentric as macOS draws them (each one the corner
+/// around it less the padding between): the panel and its popover 18;
+/// their cards 10 (8 in); a card's rows 6 (4 in); controls 6.
+pub const WINDOW_RADIUS: f32 = 18.0;
+
+/// A frameless window's surface (the panel, its popover): the popover
+/// material behind the window, rounded at `WINDOW_RADIUS` with a hairline,
+/// as macOS draws a menu bar extra (the window itself is transparent).
+pub fn window_surface(surface: nsh_core::element::View) -> nsh_core::element::View {
+    use nsh_core::prelude::*;
+    let mut material = nsh_core::MacOsBackdrop::default();
+    material.material = nsh_core::MacOsBackdropMaterial::Popover;
+    material.blending = nsh_core::MacOsBackdropBlending::BehindWindow;
+    material.state = nsh_core::MacOsBackdropState::Active;
+    surface
+        .rounded(px(WINDOW_RADIUS))
+        .overflow_hidden()
+        .macos_backdrop(Some(material))
+        .border_1()
+        .border_color(card_border())
+}
+pub const ROW_RADIUS: f32 = 6.0;
+pub const CONTROL_RADIUS: f32 = 6.0;
+pub const TIP_RADIUS: f32 = 5.0;
+/// A toolbar item, straight in the window (8 in).
+pub const TAB_RADIUS: f32 = 10.0;
 pub const CORNER_RADIUS: f32 = 6.0;
 /// A grouped card's corners (System Settings' inset groups).
 pub const CARD_RADIUS: f32 = 10.0;

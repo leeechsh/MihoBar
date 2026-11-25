@@ -58,7 +58,7 @@ pub fn tip(content: impl IntoReactive<SharedString>) -> View {
         .max_w(px(260.0))
         .px(px(8.0))
         .py(px(4.0))
-        .rounded(px(6.0))
+        .rounded(px(style::TIP_RADIUS))
         .bg(style::elevated())
         .border_1()
         .border_color(style::card_border())
@@ -76,7 +76,7 @@ pub fn tile_sized(src: String, color: impl Fn() -> AdaptiveColor + 'static, size
     view()
         .w(px(size))
         .h(px(size))
-        .rounded(px(size * 0.27))
+        .rounded(px(size * 0.23))
         .items_center()
         .justify_center()
         .bg(move || color())
@@ -207,7 +207,7 @@ pub fn popup_face(value: impl Fn() -> String + 'static) -> View {
         .h(px(22.0))
         .pl(px(8.0))
         .pr(px(5.0))
-        .rounded(px(style::CORNER_RADIUS))
+        .rounded(px(style::CONTROL_RADIUS))
         .bg(style::elevated())
         .border_1()
         .border_color(style::card_border())
@@ -230,7 +230,7 @@ pub fn push_button(
         .justify_center()
         .gap(px(style::SPACE4))
         .h(px(26.0))
-        .rounded(px(7.0))
+        .rounded(px(style::CONTROL_RADIUS))
         .bg(style::elevated())
         .border_1()
         .border_color(style::card_border())
@@ -243,5 +243,5 @@ pub fn push_button(
 
 /// A text field's track (AppKit's rounded search/text field).
 pub fn field_track() -> View {
-    view().h(px(24.0)).px(px(style::SPACE6)).rounded(px(7.0)).bg(style::control_track())
+    view().h(px(24.0)).px(px(style::SPACE6)).rounded(px(style::CONTROL_RADIUS)).bg(style::control_track())
 }

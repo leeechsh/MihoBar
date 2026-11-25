@@ -90,6 +90,24 @@ test("opens the config menu", async () => {
   expect(app.texts()).toContain("导入本地配置");
 });
 
+// The config menu is a submenu like a group's nodes: it opens as the
+// pointer rests on its row, closes on another row, and gives way to a
+// group's nodes.
+test("opens the config menu on hover", async () => {
+  const app = await open(".", { platform: "macos", network: "live" });
+  await app.press("启动内核 >> nth=1");
+  await app.waitFor("🧩 分组选择", { timeout: 30000 });
+  await app.hover("切换配置");
+  await app.waitFor("本地配置", { timeout: 3000 });
+  await app.hover("系统代理");
+  await app.waitUntil(() => !app.texts().includes("本地配置"), { timeout: 3000 });
+  await app.hover("切换配置");
+  await app.waitFor("本地配置", { timeout: 3000 });
+  await app.hover("🧩 分组选择");
+  await app.waitUntil(() => !app.texts().includes("本地配置") && app.texts().includes("DIRECT"), { timeout: 3000 });
+  await app.press("停止");
+}, 60000);
+
 test("toggles the groups' sorting, history and hidden groups", async () => {
   const app = await open(".", { platform: "macos" });
   await app.press("节点按延迟排序");
@@ -211,6 +229,6 @@ test("imports, lists and deletes a subscription", async () => {
 test("shows the Wi-Fi auto-switch in the config menu", async () => {
   const app = await open(".", { platform: "macos" });
   await app.press("切换配置");
-  await app.waitFor("开启 Wi-Fi 自动切换", { timeout: 5000 });
+  await app.waitFor("Wi-Fi 自动切换", { timeout: 5000 });
 });
 

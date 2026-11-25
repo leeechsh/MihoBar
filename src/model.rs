@@ -299,6 +299,10 @@ struct Services {
     connections_interval: std::cell::Cell<u64>,
     /// The advanced window's speeds and closed connections.
     z_tracker: RefCell<crate::conns::Tracker>,
+    /// Hides the panel (set by the app's root).
+    panel_hide: RefCell<Option<Rc<dyn Fn()>>>,
+    /// The config feedback shown now (a newer one replaces it).
+    feedback_token: std::cell::Cell<u64>,
     /// Log lines waiting for the next flush (every 500 ms), and the next
     /// line's number.
     z_log_pending: RefCell<Vec<crate::conns::ZLog>>,
@@ -350,6 +354,12 @@ pub struct Model {
     pub proxy_latency_testing: Signal<HashSet<(String, String)>>,
     pub provider_updating: Signal<HashSet<String>>,
     pub side_popover: Signal<Option<SidePopover>>,
+    /// The side popover's measured content height (0: not yet).
+    pub side_measured: Signal<f32>,
+    /// What the config menu last did (text, failed), shown for a while.
+    pub config_feedback: Signal<Option<(String, bool)>>,
+    /// The config menu's action running (its label key).
+    pub config_busy: Signal<Option<&'static str>>,
     pub ports: Signal<ProxyPorts>,
     pub connections: Signal<Vec<crate::data::Connection>>,
     pub rules: Signal<Vec<crate::data::RuleItem>>,
@@ -459,6 +469,8 @@ impl Model {
             usage: RefCell::new(usage),
             connections_interval: std::cell::Cell::new(0),
             z_tracker: RefCell::new(Default::default()),
+            panel_hide: RefCell::new(None),
+            feedback_token: std::cell::Cell::new(0),
             z_log_pending: RefCell::new(Vec::new()),
             z_log_seq: std::cell::Cell::new(1),
         });
@@ -497,6 +509,9 @@ impl Model {
             proxy_latency_testing: signal(HashSet::new()),
             provider_updating: signal(HashSet::new()),
             side_popover: signal(None),
+            side_measured: signal(0.0),
+            config_feedback: signal(None),
+            config_busy: signal(None),
             ports: signal(ProxyPorts::default()),
             connections: signal(Vec::new()),
             rules: signal(Vec::new()),
@@ -883,6 +898,50 @@ impl Model {
     /// a bundle) its window in this one.
     fn z_mode(&self) -> bool {
         self.services.advanced || self.manager_open.get_untracked()
+    }
+
+    /// How the app's root hides the panel.
+    pub(crate) fn set_panel_hide(&self, hide: Rc<dyn Fn()>) {
+        *self.services.panel_hide.borrow_mut() = Some(hide);
+    }
+
+    /// Hides the panel (before a dialog of its own: shown as a sheet of the
+    /// panel, it went with the panel as the focus left it).
+    pub(crate) fn hide_panel(&self) {
+        let hide = self.services.panel_hide.borrow().clone();
+        if let Some(hide) = hide {
+            hide();
+        }
+    }
+
+    /// Shows `text` in the config menu for 5 s (an error in red).
+    pub fn config_feedback_show(&self, text: String, failed: bool) {
+        let token = self.services.feedback_token.get() + 1;
+        self.services.feedback_token.set(token);
+        self.config_feedback.set(Some((text, failed)));
+        let m = self.clone();
+        run_root(async move {
+            timer(Duration::from_secs(5)).await;
+            if m.services.feedback_token.get() == token {
+                m.config_feedback.set(None);
+            }
+        });
+    }
+
+    /// Reloads the config list and, while the core runs, its config (the
+    /// menu's 重载配置文件).
+    pub async fn reload_configs_and_core(&self) {
+        self.config_busy.set(Some("ui.quick.reload_config_list"));
+        self.reload_configs();
+        let count = self.configs.get_untracked().len();
+        self.log_app("info", self.tr_args("log.config.loaded_count", &[&count]));
+        let mut text = self.tr_args("log.config.loaded_count", &[&count]);
+        if self.is_running_untracked() {
+            self.reload_config().await;
+            text = format!("{text} · {}", self.tr("ui.quick.config_reloaded"));
+        }
+        self.config_busy.set(None);
+        self.config_feedback_show(text, false);
     }
 
     /// The interface is in Chinese.
@@ -1690,6 +1749,9 @@ impl Model {
     /// Imports a config file the user picks into the config directory
     /// (ClashBar's `importLocalConfigFile`).
     pub async fn import_local_config(&self) {
+        // The dialog shows in a window of its own with the panel hidden.
+        self.side_popover.set(None);
+        self.hide_panel();
         let dir = self.config_dir();
         let mut dialog = nsh_core::file_dialog::OpenDialog::files();
         dialog.filters = vec![nsh_core::file_dialog::FileFilter::new("YAML", ["yaml", "yml"])];
@@ -1722,12 +1784,17 @@ impl Model {
         match result {
             Ok(_) => {
                 self.log_app("info", self.tr_args("log.config.import_local.success", &[&file_name]));
+                self.config_feedback_show(self.tr_args("log.config.import_local.success", &[&file_name]), false);
                 self.reload_configs();
                 if overwrite && self.selected_config_name().as_deref() == Some(file_name.as_str()) && self.services.core.is_running() {
                     self.reload_config().await;
                 }
             }
-            Err(e) => self.log_app("error", self.tr_args("log.config.import_local.failed", &[&file_name, &e])),
+            Err(e) => {
+                let text = self.tr_args("log.config.import_local.failed", &[&file_name, &e]);
+                self.log_app("error", text.clone());
+                self.config_feedback_show(text, true);
+            }
         }
     }
 

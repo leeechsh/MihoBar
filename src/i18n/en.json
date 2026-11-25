@@ -487,5 +487,13 @@
 "z.misses": "Misses",
 "z.update_all": "Update all",
 "z.update": "Update",
-"z.rules_word": "rules"
+"z.rules_word": "rules",
+"ui.quick.ssid.auto_switch": "Wi-Fi Auto Switch",
+"ui.quick.config_reloaded": "current config reloaded",
+"log.config.remote.up_to_date": "Subscription up to date: %@",
+"log.config.remote.updated": "Subscription updated: %@",
+"log.config.remote.update_result": "Subscriptions updated: %d ok (%d changed), %d failed",
+"ui.quick.remote.back": "Back",
+"ui.quick.remote.url_required": "Enter the subscription URL",
+"ui.quick.remote.auto_update_hint": "Download again at the interval"
 }

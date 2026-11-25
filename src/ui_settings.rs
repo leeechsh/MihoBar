@@ -61,7 +61,7 @@ fn toggle_row(
         .items_center()
         .px(px(style::SPACE6))
         .min_h(px(34.0))
-        .rounded(px(7.0))
+        .rounded(px(style::ROW_RADIUS))
         .hover(|s| s.bg(style::fill(0.04)))
         .on_press(move || {
             if !d1() {
@@ -441,7 +441,7 @@ fn exceptions_section(m: Model) -> impl IntoElement {
         .items_center()
         .px(px(style::SPACE6))
         .min_h(px(34.0))
-        .rounded(px(7.0))
+        .rounded(px(style::ROW_RADIUS))
         .hover(|s| s.bg(style::fill(0.04)))
         .on_press(move || expanded.set(!expanded.get()))
         .child(row_label(icons::turn_right(), {

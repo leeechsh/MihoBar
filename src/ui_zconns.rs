@@ -45,7 +45,7 @@ pub(crate) fn segment(label: impl Fn() -> String + 'static, on: impl Fn() -> boo
         .items_center()
         .h(px(28.0))
         .px(px(12.0))
-        .rounded(px(8.0))
+        .rounded(px(7.0))
         .bg(move || if on() { z::primary(1.0) } else { z::primary(0.0) })
         .transition_colors()
         .duration(150.0)

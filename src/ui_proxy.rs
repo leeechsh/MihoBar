@@ -47,6 +47,8 @@ fn show_side(m: &Model, win: &WindowRef, row: ElementRef, kind: SideKind) {
         let Some(measured) = row.measure().await else { return };
         let top = win.state().map_or(0.0, |s| s.content_bounds.origin.y.0);
         let mid = top + measured.page.y.0 + measured.frame.size.height.0 / 2.0;
+        // Measured afresh as it shows.
+        m.side_measured.set(0.0);
         m.side_popover.set(Some(SidePopover { kind, anchor_mid_y: mid }));
     });
 }
@@ -63,22 +65,52 @@ fn close_nodes_on_hover(m: &Model) -> impl Fn() + 'static {
     }
 }
 
-/// Opens `kind` beside the panel, level with the row `row` measures.
-pub(crate) fn open_side(m: &Model, win: &WindowRef, row: ElementRef, kind: SideKind) {
-    if m.side_popover.with_untracked(|p| p.as_ref().is_some_and(|p| p.kind == kind)) {
-        m.side_popover.set(None);
-        return;
-    }
+/// Closes the config menu when the pointer rests on another row (its
+/// import form stays: it may hold what was typed).
+fn close_configs_on_hover(m: &Model) -> impl Fn(&MouseEvent) + 'static {
     let m = m.clone();
-    let win = win.clone();
-    crate::model::run_root(async move {
-        let Some(measured) = row.measure().await else { return };
-        // The panel's top on the screen (none reported: a window that is
-        // not on a screen, as in headless tests).
+    move |_: &MouseEvent| {
+        HOVER_OPEN.with(|h| h.set(h.get() + 1));
+        if m.side_popover.with_untracked(|p| matches!(p, Some(SidePopover { kind: SideKind::Configs, .. }))) {
+            m.side_popover.set(None);
+        }
+    }
+}
+
+/// A submenu's row: what it opens shows while the pointer rests on the
+/// row (a native menu's short delay), at once when a submenu already shows
+/// (it follows the pointer), and leaving the row cancels a pending one.
+/// `row_height` places it level with the row.
+fn hover_opens(m: &Model, win: &WindowRef, row: View, row_height: f32, kind: impl Fn() -> SideKind + 'static) -> View {
+    let (m, win) = (m.clone(), win.clone());
+    row.on_mouse_enter(move |e: &MouseEvent| {
+        let token = HOVER_OPEN.with(|h| {
+            h.set(h.get() + 1);
+            h.get()
+        });
+        // The row's middle on the screen, from the event (no measuring
+        // round trip).
+        let row_top = e.page_position.y.0 - e.position.y.0;
         let top = win.state().map_or(0.0, |s| s.content_bounds.origin.y.0);
-        let mid = top + measured.page.y.0 + measured.frame.size.height.0 / 2.0;
-        m.side_popover.set(Some(SidePopover { kind, anchor_mid_y: mid }));
-    });
+        let open = SidePopover { kind: kind(), anchor_mid_y: top + row_top + row_height / 2.0 };
+        let showing = m.side_popover.with_untracked(|p| matches!(p, Some(SidePopover { kind: SideKind::Nodes(_) | SideKind::Configs, .. })));
+        if m.side_popover.with_untracked(|p| p.as_ref().is_some_and(|p| p.kind == open.kind)) {
+            return;
+        }
+        if showing {
+            m.side_measured.set(0.0);
+            m.side_popover.set(Some(open));
+        } else {
+            let m = m.clone();
+            set_timeout(std::time::Duration::from_millis(90), move || {
+                if HOVER_OPEN.with(|h| h.get()) == token {
+                    m.side_measured.set(0.0);
+                    m.side_popover.set(Some(open));
+                }
+            });
+        }
+    })
+    .on_mouse_leave(move |_: &MouseEvent| HOVER_OPEN.with(|h| h.set(h.get() + 1)))
 }
 
 pub fn proxy_tab(m: Model, win: WindowRef) -> impl IntoElement {
@@ -92,7 +124,7 @@ pub fn proxy_tab(m: Model, win: WindowRef) -> impl IntoElement {
                     let close = close_nodes_on_hover(&m);
                     move |_: &MouseEvent| close()
                 })
-                .child(traffic_overview(m.clone()))
+                .child(view().on_mouse_enter(close_configs_on_hover(&m)).child(traffic_overview(m.clone())))
                 .child(quick_rows(m.clone(), win.clone())),
         )
         .child(when(
@@ -273,7 +305,7 @@ fn quick_row(
         .gap(px(10.0))
         .px(px(style::SPACE6))
         .min_h(px(36.0))
-        .rounded(px(7.0))
+        .rounded(px(style::ROW_RADIUS))
         .child(widgets::tile(icon, color))
         .child(
             text(title)
@@ -380,9 +412,16 @@ fn quick_rows(m: Model, win: WindowRef) -> impl IntoElement {
     )
     .element_ref(&config_ref)
     .hover(|s| s.bg(style::fill(0.05)))
-    .on_press(move || {
-        open_side(&config_m, &win, config_ref, SideKind::Configs);
+    .bg({
+        let m = m.clone();
+        move || if m.side_popover.with(|p| matches!(p, Some(SidePopover { kind: SideKind::Configs | SideKind::ImportRemote, .. }))) { style::accent(0.13) } else { style::fill(0.0) }
+    })
+    .on_press({
+        let win = win.clone();
+        move || show_side(&config_m, &win, config_ref, SideKind::Configs)
     });
+    // A submenu, as a group's row: it opens on hover.
+    let switch_config = hover_opens(&m, &win, switch_config, 36.0, || SideKind::Configs);
 
     let copy_m = m.clone();
     let copied = signal(false);
@@ -424,16 +463,18 @@ fn quick_rows(m: Model, win: WindowRef) -> impl IntoElement {
                     .tint_color(move || if copied.get() { style::positive() } else { style::tertiary_label() }),
             ),
     );
+    // The other rows close the config menu as the pointer reaches them.
+    let closes = |row: AnyElement| view().on_mouse_enter(close_configs_on_hover(&m)).child(row);
     widgets::card()
-        .child(mode_row(m.clone(), mode_win))
+        .child(closes(mode_row(m.clone(), mode_win).into_element()))
         .child(widgets::divider(ROW_INSET))
         .child(switch_config)
         .child(widgets::divider(ROW_INSET))
-        .child(system_proxy_row(m.clone()))
+        .child(closes(system_proxy_row(m.clone()).into_element()))
         .child(widgets::divider(ROW_INSET))
-        .child(tun_row(m.clone()))
+        .child(closes(tun_row(m.clone()).into_element()))
         .child(widgets::divider(ROW_INSET))
-        .child(copy_terminal)
+        .child(closes(copy_terminal.into_element()))
 }
 
 // --- Section headers ---------------------------------------------------------
@@ -509,7 +550,7 @@ fn provider_row(m: Model, entry: ReadSignal<(String, ProviderDetail)>) -> impl I
         .gap(px(style::SPACE6))
         .px(px(style::SPACE6))
         .py(px(style::SPACE6))
-        .rounded(px(7.0))
+        .rounded(px(style::ROW_RADIUS))
         .hover(|s| s.bg(style::fill(0.04)))
         .child(
             view()
@@ -817,7 +858,7 @@ fn group_row(m: Model, win: WindowRef, group: ReadSignal<ProxyGroup>) -> impl In
         .gap(px(style::SPACE4))
         .h(px(GROUP_ROW_HEIGHT))
         .px(px(style::SPACE6))
-        .rounded(px(7.0))
+        .rounded(px(style::ROW_RADIUS))
         .hover(|s| s.bg(style::fill(0.05)))
         .bg({
             let m = m.clone();
@@ -847,7 +888,7 @@ fn group_row(m: Model, win: WindowRef, group: ReadSignal<ProxyGroup>) -> impl In
                 let open = SidePopover { kind, anchor_mid_y };
                 // A submenu already open follows the pointer at once; the
                 // first opens after a native menu's short rest.
-                let showing = m.side_popover.with_untracked(|p| matches!(p, Some(SidePopover { kind: SideKind::Nodes(_), .. })));
+                let showing = m.side_popover.with_untracked(|p| matches!(p, Some(SidePopover { kind: SideKind::Nodes(_) | SideKind::Configs, .. })));
                 if showing {
                     if !m.side_popover.with_untracked(|p| p.as_ref().is_some_and(|p| p.kind == open.kind)) {
                         m.side_popover.set(Some(open));
@@ -910,6 +951,16 @@ pub const SIDE_WIDTH: f32 = 280.0;
 
 /// The height a side popover's content wants.
 pub fn side_height(m: &Model, kind: &SideKind) -> f32 {
+    // The config menu and the import form are as tall as they measure
+    // (they change as subscriptions update or Wi-Fi switching shows its
+    // state); a node list is sized by its rows and scrolls.
+    if !matches!(kind, SideKind::Nodes(_)) {
+        let measured = m.side_measured.get();
+        if measured > 0.0 {
+            // Its padding and hairline border around it.
+            return measured + style::SPACE8 * 2.0 + 2.0;
+        }
+    }
     let rows = match kind {
         SideKind::Nodes(group) => m.groups.with_untracked(|gs| {
             gs.iter().find(|g| &g.name == group).map_or(0, |g| proxy::ordered_unique(&g.all).len())
@@ -917,16 +968,32 @@ pub fn side_height(m: &Model, kind: &SideKind) -> f32 {
         SideKind::Configs => m.configs.with_untracked(|c| c.len()) * 2 + 11,
         SideKind::ImportRemote => 12,
     };
-    // Node rows are 26 points; the header and padding about 46.
-    (46.0 + rows as f32 * 26.0 + 8.0).min(560.0)
+    // Node rows are 26 points; the header and padding about 50.
+    (50.0 + rows as f32 * 26.0 + 8.0).min(560.0)
+}
+
+/// `content` at its own height, reported for the popover's height, and
+/// scrolling if the screen is shorter.
+fn measured(m: Model, content: impl IntoElement) -> impl IntoElement {
+    scroll().flex_1().scrollbar(false).child(
+        view()
+            .on_layout(move |b: &Bounds<Points>| {
+                let h = b.size.height.0;
+                if (m.side_measured.get_untracked() - h).abs() > 0.5 {
+                    m.side_measured.set(h);
+                }
+            })
+            .child(content),
+    )
 }
 
 pub fn side_content(m: Model) -> impl IntoElement {
     let nodes_m = m.clone();
     let configs_m = m.clone();
-    view()
+    // 8 in from the 18pt corner: the 10pt cards sit concentric in it.
+    style::window_surface(view())
         .flex_1()
-        .p(px(style::SPACE6))
+        .p(px(style::SPACE8))
         .bg(style::menu_background())
         .child(when(
             {
@@ -940,7 +1007,7 @@ pub fn side_content(m: Model) -> impl IntoElement {
                 let m = m.clone();
                 move || m.side_popover.with(|p| matches!(p, Some(SidePopover { kind: SideKind::Configs, .. })))
             },
-            move || configs_menu(configs_m.clone()),
+            move || measured(configs_m.clone(), configs_menu(configs_m.clone())),
         ))
         .child(when(
             {
@@ -949,7 +1016,7 @@ pub fn side_content(m: Model) -> impl IntoElement {
             },
             {
                 let m = m.clone();
-                move || import_remote_form(m.clone())
+                move || measured(m.clone(), import_remote_form(m.clone()))
             },
         ))
 
@@ -978,7 +1045,7 @@ fn popover_header(title: impl Fn() -> String + 'static, count: impl Fn() -> Stri
                         .text_color(style::secondary_label())
                         .px(px(style::SPACE4))
                         .py(px(1.0))
-                        .rounded(px(7.0))
+                        .rounded(px(style::ROW_RADIUS))
                         .bg(style::badge_fill()),
                 )
                 .child(view().flex_1())
@@ -1090,7 +1157,7 @@ fn node_row(
         .gap(px(1.0))
         .h(px(26.0))
         .px(px(style::SPACE4))
-        .rounded(px(7.0))
+        .rounded(px(style::ROW_RADIUS))
         .bg({
             let selected = selected.clone();
             move || if selected() { style::accent(0.14) } else { style::fill(0.0) }
@@ -1177,30 +1244,58 @@ fn node_row(
 }
 
 /// The "switch config" menu (ClashBar's `configMenuContent`).
+/// A row of the config menu's cards (the panel's quick rows): a tile, a
+/// title, and what follows it.
+fn menu_row(icon: String, color: fn() -> AdaptiveColor, title: impl Fn() -> String + 'static, on_press: impl Fn() + 'static) -> View {
+    view()
+        .flex_row()
+        .items_center()
+        .gap(px(10.0))
+        .px(px(style::SPACE6))
+        .min_h(px(34.0))
+        .rounded(px(style::ROW_RADIUS))
+        .hover(|s| s.bg(style::fill(0.05)))
+        .on_press(on_press)
+        .child(widgets::tile(icon, color))
+        .child(text(title).flex_1().truncate().text_size(px(font::BODY)).font_weight(FontWeight::MEDIUM).text_color(style::primary_label()))
+}
+
+/// What the config menu just did: a line in green (done) or red (failed).
+fn feedback_line(m: Model) -> impl IntoElement {
+    let failed = {
+        let m = m.clone();
+        move || m.config_feedback.with(|f| f.as_ref().is_some_and(|(_, failed)| *failed))
+    };
+    let (f1, f2) = (failed.clone(), failed.clone());
+    view()
+        .flex_row()
+        .items_center()
+        .gap(px(style::SPACE4))
+        .px(px(style::SPACE6))
+        .py(px(style::SPACE4))
+        .rounded(px(style::CORNER_RADIUS))
+        .bg(move || if f1() { style::negative().opacity(0.12) } else { style::positive().opacity(0.12) })
+        .child(image(move || ImageSrc::from(if f2() { icons::warning_triangle() } else { icons::checkmark_circle_fill() })).w(px(12.0)).h(px(12.0)).tint_color(move || if failed() { style::negative() } else { style::positive() }))
+        .child(text(move || m.config_feedback.with(|f| f.as_ref().map(|(t, _)| t.clone()).unwrap_or_default())).flex_1().text_size(px(font::CAPTION)).text_color(style::primary_label()))
+}
+
+/// Rows in a card with inset dividers between them.
+fn card_of(rows: Vec<AnyElement>) -> impl IntoElement {
+    let n = rows.len();
+    let mut card = widgets::card();
+    for (i, row) in rows.into_iter().enumerate() {
+        card = card.child(row);
+        if i + 1 < n {
+            card = card.child(widgets::divider(ROW_INSET));
+        }
+    }
+    card
+}
+
+/// The config menu (ClashBar's): the local and remote configs to choose
+/// from, what can be done with them, and Wi-Fi switching, as the panel's
+/// cards.
 fn configs_menu(m: Model) -> impl IntoElement {
-    let action = |m: &Model, icon: String, key: &'static str, f: Rc<dyn Fn()>| {
-        let m = m.clone();
-        view()
-            .flex_row()
-            .items_center()
-            .gap(px(style::SPACE6))
-            .h(px(style::COMPACT_ROW_HEIGHT + 4.0))
-            .px(px(style::SPACE4))
-            .rounded(px(style::CORNER_RADIUS))
-            .hover(|s| s.bg(style::fill(0.08)))
-            .on_press(move || f())
-            .child(icon_view(icon, 12.0, style::secondary_label))
-            .child(text(move || m.tr(key)).text_size(px(font::BODY)).text_color(style::primary_label()))
-    };
-    let section = |m: &Model, key: &'static str| {
-        let m = m.clone();
-        text(move || m.tr(key))
-            .px(px(style::SPACE4))
-            .pt(px(style::SPACE2))
-            .text_size(px(font::CAPTION))
-            .font_weight(FontWeight::BOLD)
-            .text_color(style::secondary_label())
-    };
     let local = {
         let m = m.clone();
         move || m.configs.get().into_iter().filter(|f| m.subscription(f).is_none()).collect::<Vec<_>>()
@@ -1213,85 +1308,113 @@ fn configs_menu(m: Model) -> impl IntoElement {
         let remote = remote.clone();
         move || !remote().is_empty()
     };
-    let (lm, rm) = (m.clone(), m.clone());
-    let (reload_m, finder_m, import_m, remote_m, update_m) = (m.clone(), m.clone(), m.clone(), m.clone(), m.clone());
-    let remote_section_m = m.clone();
-    view()
-        .flex_1()
-        .gap(px(2.0))
-        .child(section(&m, "ui.quick.configs.local_section"))
-        .child(each(local, |n: &String| n.clone(), move |name, _| config_menu_row(lm.clone(), name)))
-        .child(when(has_remote, move || {
-            let rm = rm.clone();
-            let remote = remote.clone();
+    let list = |m: &Model, files: Rc<dyn Fn() -> Vec<String>>| {
+        let m = m.clone();
+        widgets::card().child(each(move || files(), |n: &String| n.clone(), move |name, index| {
             view()
-                .gap(px(2.0))
-                .child(section(&remote_section_m, "ui.quick.configs.remote_section"))
-                .child(each(remote, |n: &String| n.clone(), move |name, _| config_menu_row(rm.clone(), name)))
+                .child(when(move || index.get() > 0, || widgets::divider(ROW_INSET)))
+                .child(config_menu_row(m.clone(), name))
         }))
-        .child(view().h(px(0.65)).bg(style::separator()).my(px(style::SPACE2)))
-        .child(action(&m, icons::arrows_circlepath(), "ui.quick.reload_config_list", Rc::new(move || {
-            reload_m.reload_configs();
-            let count = reload_m.configs.get_untracked().len();
-            reload_m.log_app("info", reload_m.tr_args("log.config.loaded_count", &[&count]));
-        })))
-        .child(action(&m, icons::import_file(), "ui.quick.import_local_config", Rc::new(move || {
+    };
+    let title = |m: &Model, key: &'static str, count: Rc<dyn Fn() -> String>| {
+        let m = m.clone();
+        widgets::section_title(move || m.tr(key), Some(count), view())
+    };
+    let (local_count, remote_count) = (local.clone(), remote.clone());
+    let (reload_m, finder_m, import_m, remote_m, update_m) = (m.clone(), m.clone(), m.clone(), m.clone(), m.clone());
+    let tr = |m: &Model, key: &'static str| {
+        let m = m.clone();
+        move || m.tr(key)
+    };
+    // A row's mark while its action runs.
+    let busy = |m: &Model, key: &'static str| {
+        let m = m.clone();
+        let shown = m.clone();
+        when(move || shown.config_busy.get() == Some(key), move || icon_view(icons::timer(), 12.0, style::secondary_label))
+    };
+    let actions = card_of(vec![
+        menu_row(icons::arrows_circlepath(), style::gray, tr(&m, "ui.quick.reload_config_list"), move || {
+            if reload_m.config_busy.get_untracked().is_some() {
+                return;
+            }
+            let m = reload_m.clone();
+            crate::model::run_root(async move { m.reload_configs_and_core().await });
+        })
+        .child(busy(&m, "ui.quick.reload_config_list"))
+        .into_element(),
+        menu_row(icons::import_file(), style::info, tr(&m, "ui.quick.import_local_config"), move || {
             let m = import_m.clone();
-            m.side_popover.set(None);
             crate::model::run_root(async move { m.import_local_config().await });
-        })))
-        .child(action(&m, icons::link(), "ui.quick.import_remote_config", Rc::new(move || {
+        })
+        .into_element(),
+        menu_row(icons::link(), style::purple, tr(&m, "ui.quick.import_remote_config"), move || {
             let anchor = remote_m.side_popover.with_untracked(|p| p.as_ref().map_or(0.0, |p| p.anchor_mid_y));
+            remote_m.side_measured.set(0.0);
             remote_m.side_popover.set(Some(SidePopover { kind: SideKind::ImportRemote, anchor_mid_y: anchor }));
-        })))
-        .child(action(&m, icons::arrow_down_circle_line(), "ui.quick.update_remote_configs", Rc::new(move || {
+        })
+        .into_element(),
+        menu_row(icons::arrow_down_circle_line(), style::positive, tr(&m, "ui.quick.update_remote_configs"), move || {
+            if update_m.config_busy.get_untracked().is_some() {
+                return;
+            }
             let m = update_m.clone();
             crate::model::run_root(async move { m.update_all_remote_configs().await });
-        })))
-        .child(action(&m, icons::folder(), "ui.quick.show_in_finder", Rc::new(move || {
-            finder_m.show_config_dir();
-        })))
+        })
+        .child(busy(&m, "ui.quick.update_remote_configs"))
+        .into_element(),
+        menu_row(icons::folder(), style::warning, tr(&m, "ui.quick.show_in_finder"), move || finder_m.show_config_dir()).into_element(),
+    ]);
+    let remote_title_m = m.clone();
+    let remote_list_m = m.clone();
+    let feedback_m = m.clone();
+    view()
+        .gap(px(style::SPACE4))
+        .child(when(move || feedback_m.config_feedback.with(Option::is_some), {
+            let m = m.clone();
+            move || feedback_line(m.clone())
+        }))
+        .child(title(&m, "ui.quick.configs.local_section", Rc::new(move || local_count().len().to_string())))
+        .child(list(&m, Rc::new(local)))
+        .child(when(has_remote, move || {
+            let remote = remote.clone();
+            let remote_count = remote_count.clone();
+            view()
+                .gap(px(style::SPACE4))
+                .child(title(&remote_title_m, "ui.quick.configs.remote_section", Rc::new(move || remote_count().len().to_string())))
+                .child(list(&remote_list_m, Rc::new(remote)))
+        }))
+        .child(view().h(px(style::SPACE2)))
+        .child(actions)
         .child(ssid_strategy_controls(m.clone()))
 }
 
-/// Wi-Fi auto-switch in the config menu (ClashBar's SSID strategy items).
+/// Wi-Fi auto-switch in the config menu (ClashBar's SSID strategy items):
+/// a switch, and while it is on, the permission and the current network.
 fn ssid_strategy_controls(m: Model) -> impl IntoElement {
     let enabled = {
         let m = m.clone();
         move || m.settings.with(|s| s.ssid_strategy_enabled)
     };
-    let (toggle_m, status_m, perm_m, perm2_m) = (m.clone(), m.clone(), m.clone(), m.clone());
+    let (toggle_m, status_m, perm_m, perm2_m, title_m) = (m.clone(), m.clone(), m.clone(), m.clone(), m.clone());
     let e1 = enabled.clone();
     let e2 = enabled.clone();
-    view()
-        .gap(px(2.0))
-        .child(view().h(px(0.65)).bg(style::separator()).my(px(style::SPACE2)))
+    widgets::card()
         .child(
-            view()
-                .flex_row()
-                .items_center()
-                .gap(px(style::SPACE6))
-                .h(px(style::COMPACT_ROW_HEIGHT + 4.0))
-                .px(px(style::SPACE4))
-                .rounded(px(style::CORNER_RADIUS))
-                .hover(|s| s.bg(style::fill(0.08)))
-                .on_press(move || {
-                    let m = toggle_m.clone();
-                    let next = !m.settings.with_untracked(|s| s.ssid_strategy_enabled);
-                    crate::model::run_root(async move { m.set_ssid_strategy_enabled(next).await });
-                })
-                .child(icon_view(icons::radiowaves(), 12.0, style::secondary_label))
-                .child(text({
-                    let m = m.clone();
-                    move || m.tr(if e1() { "ui.quick.ssid.disable_auto_switch" } else { "ui.quick.ssid.enable_auto_switch" })
-                }).text_size(px(font::BODY)).text_color(style::primary_label())),
+            menu_row(icons::radiowaves(), style::teal, move || title_m.tr("ui.quick.ssid.auto_switch"), move || {
+                let m = toggle_m.clone();
+                let next = !m.settings.with_untracked(|s| s.ssid_strategy_enabled);
+                crate::model::run_root(async move { m.set_ssid_strategy_enabled(next).await });
+            })
+            .child(widgets::switch(move || e1(), || false)),
         )
         .child(when(e2, move || {
             let m = status_m.clone();
             let (perm_m, perm2_m) = (perm_m.clone(), perm2_m.clone());
             view()
                 .gap(px(2.0))
-                .px(px(style::SPACE4))
+                .pl(px(ROW_INSET))
+                .pr(px(style::SPACE6))
+                .pb(px(style::SPACE4))
                 .child(
                     text({
                         let m = m.clone();
@@ -1355,19 +1478,16 @@ fn config_menu_row(m: Model, name: ReadSignal<String>) -> impl IntoElement {
         move || subtitle().is_some()
     };
     let phase2 = phase.clone();
+    let selected_mark = selected.clone();
     view()
         .flex_row()
         .items_center()
-        .gap(px(style::SPACE6))
-        .min_h(px(style::COMPACT_ROW_HEIGHT + 4.0))
-        .py(px(1.0))
-        .px(px(style::SPACE4))
-        .rounded(px(style::CORNER_RADIUS))
-        .bg({
-            let selected = selected.clone();
-            move || if selected() { style::accent(0.12) } else { style::fill(0.0) }
-        })
-        .hover(|s| s.bg(style::fill(0.08)))
+        .gap(px(10.0))
+        .min_h(px(38.0))
+        .py(px(3.0))
+        .px(px(style::SPACE6))
+        .rounded(px(style::ROW_RADIUS))
+        .hover(|s| s.bg(style::fill(0.05)))
         .on_press(move || {
             let m = press_m.clone();
             let name = name.get_untracked();
@@ -1423,22 +1543,20 @@ fn config_menu_row(m: Model, name: ReadSignal<String>) -> impl IntoElement {
             }
             let _ = nsh_core::element::desktop::popup_menu_at(items, e.page_position);
         })
-        .child(
-            image({
-                let selected = selected.clone();
-                let is_remote = is_remote.clone();
-                move || ImageSrc::from(if selected() { icons::checkmark_circle_fill() } else if is_remote() { icons::link() } else { icons::doc_text() })
-            })
-            .w(px(12.0))
-            .h(px(12.0))
-            .tint_color({
-                let selected = selected.clone();
-                move || if selected() { style::info() } else { style::secondary_label() }
-            }),
-        )
+        .child(dynamic({
+            let is_remote = is_remote.clone();
+            move || {
+                if is_remote() {
+                    widgets::tile(icons::link(), style::purple).into_element()
+                } else {
+                    widgets::tile(icons::doc_text(), style::info).into_element()
+                }
+            }
+        }))
         .child(
             view()
                 .flex_1()
+                .min_w(px(0.0))
                 .child(text(move || name.get()).truncate().text_size(px(font::BODY)).font_weight(FontWeight::MEDIUM).text_color(style::primary_label()))
                 .child(when(subtitle_shown, move || {
                     let subtitle = subtitle.clone();
@@ -1481,6 +1599,7 @@ fn config_menu_row(m: Model, name: ReadSignal<String>) -> impl IntoElement {
                     .bg(style::badge_fill())
             })
         })
+        .child(when(selected_mark, || icon_view(icons::checkmark(), 13.0, style::info)))
         .child(when(is_remote, move || {
             let m = refresh_m.clone();
             let phase = phase2.clone();
@@ -1502,108 +1621,175 @@ fn config_menu_row(m: Model, name: ReadSignal<String>) -> impl IntoElement {
         }))
 }
 
-/// The subscription import form (ClashBar's import alert's fields).
+/// The subscription import form (ClashBar's import alert's fields), as
+/// the panel's cards: the link and file name; updating on its own; back to
+/// the config menu, or import.
 fn import_remote_form(m: Model) -> impl IntoElement {
     let url = signal(String::new());
     let file_name = signal(String::new());
     let auto_update = signal(false);
     let hours = signal(crate::settings::RemoteSubscription::DEFAULT_INTERVAL_HOURS.to_string());
+    let missing_url = signal(false);
     let field = |placeholder: String, value: Signal<String>| {
-        input()
-            .h(px(24.0))
-            .px(px(style::SPACE6))
-            .rounded(px(5.0))
-            .border_1()
-            .border_color(style::separator())
-            .value(move || value.get())
-            .on_change(move |v: &str| value.set(v.to_owned()))
-            .placeholder(placeholder)
-            .text_size(px(font::BODY))
-            .text_color(style::primary_label())
+        widgets::field_track()
+            .flex_row()
+            .items_center()
+            .h(px(28.0))
+            .child(
+                input()
+                    .flex_1()
+                    .value(move || value.get())
+                    .on_change(move |v: &str| value.set(v.to_owned()))
+                    .placeholder(placeholder)
+                    .text_size(px(font::BODY))
+                    .text_color(style::primary_label()),
+            )
     };
     let label = |m: &Model, key: &'static str| {
         let m = m.clone();
         text(move || m.tr(key)).text_size(px(font::CAPTION)).font_weight(FontWeight::SEMIBOLD).text_color(style::secondary_label())
     };
-    let (import_m, cancel_m, auto_m) = (m.clone(), m.clone(), m.clone());
-    let button = |title: Rc<dyn Fn() -> String>, primary: bool, f: Rc<dyn Fn()>| {
-        view()
-            .flex_1()
-            .h(px(24.0))
-            .items_center()
-            .justify_center()
-            .rounded(px(style::CORNER_RADIUS))
-            .bg(if primary { style::info() } else { style::fill(0.06) })
-            .on_press(move || f())
-            .child(text(move || title()).text_size(px(font::BODY)).text_color(if primary { style::fill(0.0).map(|_| Rgba { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }.into()) } else { style::primary_label() }))
-    };
-    view()
-        .flex_1()
+    let back_m = m.clone();
+    let header = view()
+        .flex_row()
+        .items_center()
         .gap(px(style::SPACE4))
-        .p(px(style::SPACE2))
-        .child(text({
-            let m = m.clone();
-            move || m.tr("ui.quick.import_remote_config")
-        }).text_size(px(font::BODY)).font_weight(FontWeight::SEMIBOLD).text_color(style::primary_label()))
-        .child(text({
-            let m = m.clone();
-            move || m.tr("app.config.remote_import.prompt")
-        }).text_size(px(font::CAPTION)).text_color(style::secondary_label()))
-        .child(label(&m, "ui.quick.remote.url_label"))
-        .child(field(m.tr("ui.quick.remote.url_placeholder"), url))
-        .child(label(&m, "ui.quick.remote.filename_label"))
-        .child(field(m.tr("ui.quick.remote.filename_placeholder"), file_name))
+        .h(px(28.0))
         .child(
             view()
                 .flex_row()
                 .items_center()
-                .gap(px(style::SPACE6))
-                .child(
-                    view()
-                        .flex_row()
-                        .items_center()
-                        .gap(px(style::SPACE4))
-                        .on_press(move || auto_update.set(!auto_update.get()))
-                        .child(crate::ui_settings::switch(move || auto_update.get(), || false))
-                        .child(text(move || auto_m.tr("ui.quick.remote.auto_update_label")).text_size(px(font::BODY)).text_color(style::primary_label())),
-                )
-                .child(view().flex_1())
-                .child(label(&m, "ui.quick.remote.interval_each"))
-                .child(field(String::new(), hours).w(px(44.0)).text_center())
-                .child(label(&m, "ui.quick.remote.interval_unit")),
+                .gap(px(2.0))
+                .px(px(style::SPACE2))
+                .h(px(24.0))
+                .rounded(px(6.0))
+                .hover(|s| s.bg(style::fill(0.06)))
+                .on_press(move || {
+                    let anchor = back_m.side_popover.with_untracked(|p| p.as_ref().map_or(0.0, |p| p.anchor_mid_y));
+                    back_m.side_measured.set(0.0);
+                    back_m.side_popover.set(Some(SidePopover { kind: SideKind::Configs, anchor_mid_y: anchor }));
+                })
+                .child(icon_view(icons::chevron_left(), 11.0, style::info))
+                .child(text({
+                    let m = m.clone();
+                    move || m.tr("ui.quick.remote.back")
+                }).text_size(px(font::BODY)).text_color(style::info())),
         )
+        .child(text({
+            let m = m.clone();
+            move || m.tr("ui.quick.import_remote_config")
+        }).flex_1().text_size(px(font::BODY)).font_weight(FontWeight::SEMIBOLD).text_color(style::primary_label()));
+    let link_card = widgets::card()
+        .gap(px(style::SPACE4))
+        .p(px(style::SPACE6))
+        .child(label(&m, "ui.quick.remote.url_label"))
+        .child(field(m.tr("ui.quick.remote.url_placeholder"), url))
+        .child(when(move || missing_url.get() && url.with(|u| u.trim().is_empty()), {
+            let m = m.clone();
+            move || text(m.tr("ui.quick.remote.url_required")).text_size(px(font::CAPTION)).text_color(style::negative())
+        }))
+        .child(view().h(px(2.0)))
+        .child(label(&m, "ui.quick.remote.filename_label"))
+        .child(field(m.tr("ui.quick.remote.filename_placeholder"), file_name));
+    let auto_m = m.clone();
+    let hint_m = m.clone();
+    let auto_card = widgets::card()
         .child(
             view()
                 .flex_row()
-                .gap(px(style::SPACE6))
-                .mt(px(style::SPACE4))
-                .child(button(
-                    Rc::new({
-                        let m = m.clone();
-                        move || m.tr("ui.action.cancel")
-                    }),
-                    false,
-                    Rc::new(move || cancel_m.side_popover.set(None)),
-                ))
-                .child(button(
-                    Rc::new({
-                        let m = m.clone();
-                        move || m.tr("ui.action.import")
-                    }),
-                    true,
-                    Rc::new(move || {
-                        let m = import_m.clone();
-                        let input = crate::subscriptions::ImportInput {
-                            url: url.get_untracked(),
-                            file_name: file_name.get_untracked(),
-                            auto_update: auto_update.get_untracked(),
-                            interval_hours: hours.get_untracked().trim().parse().unwrap_or(crate::settings::RemoteSubscription::DEFAULT_INTERVAL_HOURS),
-                        };
-                        m.side_popover.set(None);
-                        crate::model::run_root(async move { m.import_remote_config(input).await });
-                    }),
-                )),
+                .items_center()
+                .gap(px(10.0))
+                .px(px(style::SPACE6))
+                .min_h(px(38.0))
+                .on_press(move || auto_update.set(!auto_update.get_untracked()))
+                .child(widgets::tile(icons::arrows_circlepath(), style::positive))
+                .child(
+                    view()
+                        .flex_1()
+                        .child(text(move || auto_m.tr("ui.quick.remote.auto_update_label")).text_size(px(font::BODY)).font_weight(FontWeight::MEDIUM).text_color(style::primary_label()))
+                        .child(text(move || hint_m.tr("ui.quick.remote.auto_update_hint")).text_size(px(font::CAPTION)).text_color(style::tertiary_label())),
+                )
+                .child(widgets::switch(move || auto_update.get(), || false)),
         )
+        .child(when(move || auto_update.get(), {
+            let m = m.clone();
+            move || {
+                view()
+                    .child(widgets::divider(ROW_INSET))
+                    .child(
+                        view()
+                            .flex_row()
+                            .items_center()
+                            .gap(px(style::SPACE4))
+                            .pl(px(ROW_INSET))
+                            .pr(px(style::SPACE6))
+                            .min_h(px(34.0))
+                            .child(label(&m, "ui.quick.remote.interval_each"))
+                            .child(field(String::new(), hours).w(px(56.0)))
+                            .child(label(&m, "ui.quick.remote.interval_unit")),
+                    )
+            }
+        }));
+    let cancel_m = m.clone();
+    let import_m = m.clone();
+    let can_import = move || !url.with(|u| u.trim().is_empty());
+    let buttons = view()
+        .flex_row()
+        .gap(px(style::SPACE6))
+        .child(
+            view()
+                .flex_1()
+                .h(px(28.0))
+                .items_center()
+                .justify_center()
+                .rounded(px(style::ROW_RADIUS))
+                .bg(style::fill(0.07))
+                .hover(|s| s.bg(style::fill(0.11)))
+                .on_press(move || cancel_m.side_popover.set(None))
+                .child(text({
+                    let m = m.clone();
+                    move || m.tr("ui.action.cancel")
+                }).text_size(px(font::BODY)).text_color(style::primary_label())),
+        )
+        .child(
+            view()
+                .flex_1()
+                .h(px(28.0))
+                .items_center()
+                .justify_center()
+                .rounded(px(style::ROW_RADIUS))
+                .bg(style::info())
+                .opacity(move || if can_import() { 1.0_f32 } else { 0.45_f32 })
+                .on_press(move || {
+                    if url.with_untracked(|u| u.trim().is_empty()) {
+                        missing_url.set(true);
+                        return;
+                    }
+                    let m = import_m.clone();
+                    let input = crate::subscriptions::ImportInput {
+                        url: url.get_untracked().trim().to_owned(),
+                        file_name: file_name.get_untracked(),
+                        auto_update: auto_update.get_untracked(),
+                        interval_hours: hours.get_untracked().trim().parse().unwrap_or(crate::settings::RemoteSubscription::DEFAULT_INTERVAL_HOURS),
+                    };
+                    m.side_popover.set(None);
+                    crate::model::run_root(async move { m.import_remote_config(input).await });
+                })
+                .child(text({
+                    let m = m.clone();
+                    move || m.tr("ui.action.import")
+                }).text_size(px(font::BODY)).font_weight(FontWeight::SEMIBOLD).text_color(style::white())),
+        );
+    view()
+        .gap(px(style::SPACE6))
+        .child(header)
+        .child(text({
+            let m = m.clone();
+            move || m.tr("app.config.remote_import.prompt")
+        }).px(px(style::SPACE2)).text_size(px(font::CAPTION)).text_color(style::secondary_label()))
+        .child(link_card)
+        .child(auto_card)
+        .child(buttons)
 }
 
 /// The system proxy's quick row (ClashBar's `systemProxyQuickToggleRow`).
@@ -1615,7 +1801,7 @@ fn system_proxy_row(m: Model) -> impl IntoElement {
         .gap(px(10.0))
         .px(px(style::SPACE6))
         .min_h(px(36.0))
-        .rounded(px(7.0))
+        .rounded(px(style::ROW_RADIUS))
         .hover(|s| s.bg(style::fill(0.05)))
         .on_press(move || {
             // The system proxy points at this Mac's core.
@@ -1689,7 +1875,7 @@ fn tun_row(m: Model) -> impl IntoElement {
         .child(widgets::tile(icons::shield(), style::positive))
         .child(text(move || title_m.tr("ui.quick.tun_mode")).text_size(px(font::BODY)).font_weight(FontWeight::MEDIUM).text_color(style::primary_label()))
         .child(view().flex_1())
-        .child(view().flex_row().gap(px(1.0)).p(px(2.0)).rounded(px(7.0)).bg(style::control_track()).children(chips))
+        .child(view().flex_row().gap(px(1.0)).p(px(2.0)).rounded(px(style::ROW_RADIUS)).bg(style::control_track()).children(chips))
         .child(
             view()
                 .ml(px(style::SPACE4))

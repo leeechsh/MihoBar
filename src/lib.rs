@@ -119,6 +119,15 @@ fn panel_app() -> impl IntoElement {
 
     // Shows the panel under `icon` (centered, ClashBar's PanelGeometry),
     // or hides it.
+    {
+        let m2 = m.clone();
+        let win2 = win.clone();
+        m.set_panel_hide(std::rc::Rc::new(move || {
+            win2.hide();
+            m2.panel_visible.set(false);
+            m2.side_popover.set(None);
+        }));
+    }
     let toggle_panel = {
         let m = m.clone();
         let win = win.clone();
@@ -294,7 +303,9 @@ fn panel_app() -> impl IntoElement {
                 a.focusable = Some(true);
                 a.close_on_blur = Some(false);
                 a.close_on_escape = Some(true);
-                a.backdrop = Some(nsh_core::desktop::Backdrop::Popover);
+                // Its surface is rounded (see `style::window_surface`).
+                a.transparent = Some(true);
+                a.backdrop = Some(nsh_core::desktop::Backdrop::None);
                 a.shadow = Some(true);
                 a
             })
@@ -393,8 +404,14 @@ fn panel_app() -> impl IntoElement {
     // `unloadPopoverContent`): a hidden panel holds no views.
     let shown = m.clone();
     let content_m = m.clone();
-    // The panel's white material covers the whole window.
-    view()
+    // The panel's surface: a rounded material over a transparent window.
+    {
+        let mut a = nsh_core::desktop::WindowAttributes::default();
+        a.transparent = Some(true);
+        a.backdrop = Some(nsh_core::desktop::Backdrop::None);
+        current_window().set(a);
+    }
+    crate::style::window_surface(view())
         .flex_1()
         .bg(crate::style::menu_background())
         .child(when(move || shown.panel_visible.get(), move || ui::panel(content_m.clone(), win.clone())))
