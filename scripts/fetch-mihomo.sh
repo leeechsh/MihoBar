@@ -22,6 +22,7 @@ if [ -z "$VERSION" ]; then
 fi
 [[ "$VERSION" == v* ]] || VERSION="v$VERSION"
 
+mkdir -p "$(dirname "$OUT")"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 for flavor in "${CANDIDATES[@]}"; do
