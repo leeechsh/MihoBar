@@ -1,11 +1,18 @@
 # MihoBar
 
-A native macOS menu bar client for [mihomo](https://github.com/MetaCubeX/mihomo),
-written in Rust on [NSH](https://nsh.dev).
+A lightweight native macOS menu bar client for
+[mihomo](https://github.com/MetaCubeX/mihomo), written in Rust on
+[NSH](https://nsh.dev).
 
-MihoBar is a port of **[ClashBar](https://github.com/Sitoi/ClashBar)** by Sitoi
-(v0.3.6, GPL-3.0): it follows ClashBar's behavior and reuses its localized
-strings and default config. Like ClashBar, it is licensed under the
+MihoBar draws on the ideas and design of
+**[ClashBar](https://github.com/Sitoi/ClashBar)** by Sitoi. It keeps the menu
+bar panel lean (nodes, configs, quick switches and settings) and adds the
+dashboard features of [metacubexd](https://github.com/MetaCubeX/metacubexd) —
+connections, logs, rules and usage — in a separate window that runs as its
+own process only while it is open, so everyday memory use stays low.
+
+Its localized strings and default config come from ClashBar (v0.3.6,
+GPL-3.0). Like ClashBar, MihoBar is licensed under the
 **GNU General Public License v3.0** (see `LICENSE`).
 
 ## Install
