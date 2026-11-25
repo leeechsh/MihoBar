@@ -381,6 +381,9 @@ pub struct Model {
     pub core_upgrade: Signal<crate::settings_core::TaskState>,
     /// The latest mihomo release's version, once checked (`updates`).
     pub core_latest: Signal<Option<String>>,
+    /// The rows of Settings → Updates: their checks' outcomes.
+    pub app_check: Signal<crate::updates::CheckState>,
+    pub core_check: Signal<crate::updates::CheckState>,
     pub launch_at_login: Signal<bool>,
     pub system_proxy_enabled: Signal<bool>,
     pub system_proxy_display: Signal<Option<String>>,
@@ -530,6 +533,8 @@ impl Model {
             geo_update: signal(Default::default()),
             core_upgrade: signal(Default::default()),
             core_latest: signal(None),
+            app_check: signal(Default::default()),
+            core_check: signal(Default::default()),
             launch_at_login: signal(false),
             system_proxy_enabled: signal(false),
             system_proxy_display: signal(None),
@@ -1910,7 +1915,7 @@ pub(crate) fn bundled_executable() -> Option<PathBuf> {
 
 /// Brings process `pid`'s windows forward.
 #[cfg(target_os = "macos")]
-fn activate_process(pid: u32) {
+pub(crate) fn activate_process(pid: u32) {
     use objc2_app_kit::{NSApplicationActivationOptions, NSRunningApplication};
     if let Some(app) = NSRunningApplication::runningApplicationWithProcessIdentifier(pid as i32) {
         #[allow(deprecated)]

@@ -112,8 +112,11 @@ fn selection_row<T: Copy + PartialEq + 'static>(
         )
 }
 
+/// A port field: the port MihoBar keeps and lays over the config, or,
+/// left empty, the config's own port as the core reports it (its
+/// placeholder; "Off" for 0).
 fn port_row(m: &Model, key: &'static str, label_key: &'static str, icon: String) -> impl IntoElement {
-    let (title_m, value_m, edit_m) = (m.clone(), m.clone(), m.clone());
+    let (title_m, value_m, edit_m, hint_m) = (m.clone(), m.clone(), m.clone(), m.clone());
     view()
         .flex_row()
         .items_center()
@@ -130,7 +133,19 @@ fn port_row(m: &Model, key: &'static str, label_key: &'static str, icon: String)
                 .bg(style::control_track())
                 .value(move || settings_core::port_value(&value_m.core_settings(), key).to_owned())
                 .on_change(move |v: &str| edit_m.edit_port(key, v.to_owned()))
-                .placeholder(m.tr("ui.placeholder.port"))
+                .placeholder(move || {
+                    let live = hint_m.runtime_config.with(|r| match key {
+                        "port" => r.port,
+                        "socks-port" => r.socks_port,
+                        "mixed-port" => r.mixed_port,
+                        "redir-port" => r.redir_port,
+                        _ => r.tproxy_port,
+                    });
+                    match live.filter(|p| *p > 0) {
+                        Some(p) if hint_m.is_live() => p.to_string(),
+                        _ => hint_m.tr("ui.placeholder.port"),
+                    }
+                })
                 .text_size(px(font::BODY))
                 .text_right()
                 .text_color(style::primary_label()),
@@ -287,18 +302,48 @@ fn value_row(icon: String, title: impl Fn() -> String + 'static, value: impl Fn(
 /// Updates: MihoBar's (NSH's updater, from GitHub Releases) and the core's
 /// (mihomo's `/upgrade`), each checked automatically or by hand.
 fn updates_section(m: Model) -> impl IntoElement {
+    use crate::updates::CheckState;
+    // A row's value: the version, or the check's outcome.
+    let outcome = |m: &Model, state: CheckState, version: String| -> String {
+        match state {
+            CheckState::Checking => m.tr("ui.updates.checking"),
+            CheckState::UpToDate => m.tr("ui.updates.up_to_date"),
+            CheckState::Failed => m.tr("ui.updates.failed"),
+            CheckState::Latest(latest) => m.tr_args("ui.updates.latest", &[&format!("v{}", latest.trim_start_matches('v'))]),
+            CheckState::Available(latest) => m.tr_args("ui.updates.core_newer", &[&version, &format!("v{}", latest.trim_start_matches('v'))]),
+            CheckState::Idle => version,
+        }
+    };
+    let app_value = {
+        let m = m.clone();
+        move || outcome(&m, m.app_check.get(), format!("v{}", crate::updates::app_version()))
+    };
     let core_value = {
         let m = m.clone();
         move || {
             let current = m.version.get();
             let current = if current.trim().is_empty() || current == "--" { "--".to_owned() } else { current };
-            if m.core_update_available() {
-                let latest = m.core_latest.get().unwrap_or_default();
-                m.tr_args("ui.updates.core_newer", &[&current, &latest])
-            } else {
-                current
-            }
+            let state = match m.core_check.get() {
+                CheckState::Idle if m.core_update_available() => CheckState::Available(m.core_latest.get().unwrap_or_default()),
+                other => other,
+            };
+            outcome(&m, state, current)
         }
+    };
+    let app_button = {
+        let (label_m, enabled_m, press_m) = (m.clone(), m.clone(), m.clone());
+        row_button(
+            move || label_m.tr(if matches!(label_m.app_check.get(), CheckState::Available(_)) { "ui.updates.install" } else { "ui.updates.check" }),
+            move || enabled_m.app_check.get() != CheckState::Checking,
+            move || {
+                let m = press_m.clone();
+                if matches!(m.app_check.get_untracked(), CheckState::Available(_)) {
+                    m.install_app_update();
+                } else {
+                    run_root(async move { m.check_app_version(true).await });
+                }
+            },
+        )
     };
     let core_button = {
         let (label_m, enabled_m, press_m) = (m.clone(), m.clone(), m.clone());
@@ -307,19 +352,22 @@ fn updates_section(m: Model) -> impl IntoElement {
                 if label_m.core_upgrade.get() == TaskState::Running {
                     label_m.tr("ui.footer.core_upgrade.running")
                 } else if label_m.core_update_available() {
-                    label_m.tr("ui.updates.core_install")
+                    label_m.tr("ui.updates.install")
                 } else {
                     label_m.tr("ui.updates.check")
                 }
             },
-            move || enabled_m.core_upgrade.get() != TaskState::Running,
+            // Installing needs the core running (mihomo upgrades itself).
+            move || {
+                enabled_m.core_upgrade.get() != TaskState::Running
+                    && enabled_m.core_check.get() != CheckState::Checking
+                    && (!enabled_m.core_update_available() || enabled_m.is_live())
+            },
             move || {
                 let m = press_m.clone();
                 run_root(async move {
                     if m.core_update_available() {
-                        if m.is_live_untracked() {
-                            m.upgrade_core().await;
-                        }
+                        m.upgrade_core().await;
                     } else {
                         m.check_core_update(false).await;
                     }
@@ -327,16 +375,12 @@ fn updates_section(m: Model) -> impl IntoElement {
             },
         )
     };
-    let app_button = {
-        let (label_m, press_m) = (m.clone(), m.clone());
-        row_button(move || label_m.tr("ui.updates.check"), || true, move || press_m.check_app_update(true))
-    };
     card()
         .child(card_header(icons::arrow_down_circle_line(), {
             let m = m.clone();
             move || m.tr("ui.section.updates")
         }))
-        .child(value_row(icons::arrow_down_circle_line(), || "MihoBar".to_owned(), || format!("v{}", crate::updates::app_version()), app_button))
+        .child(value_row(icons::arrow_down_circle_line(), || "MihoBar".to_owned(), app_value, app_button))
         .child(toggle_row(
             icons::arrows_circlepath(),
             {
@@ -534,7 +578,7 @@ fn log_level_row(m: &Model) -> impl IntoElement + use<> {
 
 
 /// Feedback over the cards (ClashBar's `settingsFeedbackBanner`).
-fn feedback_banner(m: Model) -> impl IntoElement {
+pub(crate) fn feedback_banner(m: Model) -> impl IntoElement {
     let feedback_m = m.clone();
     when(
         {

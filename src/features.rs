@@ -212,14 +212,16 @@ impl Model {
     }
 
     /// Grants the core root (an administrator prompt) when it lacks it
-    /// (ClashBar's `ensureTunPermissions`).
-    async fn ensure_tun_permissions(&self, request_if_missing: bool) -> Result<(), String> {
+    /// (ClashBar's `ensureTunPermissions`): `Ok(true)` when it was granted
+    /// now, so a core already running is still the unprivileged process and
+    /// must restart before it can open a TUN device.
+    async fn ensure_tun_permissions(&self, request_if_missing: bool) -> Result<bool, String> {
         let binary = self.core_dir().join("mihomo");
         if !binary.exists() {
             return Err(self.tr_args("app.tun.error.binary_not_found", &[&self.core_dir().display()]));
         }
         if self.tun_permissions_ok() {
-            return Ok(());
+            return Ok(false);
         }
         if !request_if_missing {
             return Err(self.tr_args("app.tun.error.permission_missing", &[]));
@@ -236,13 +238,38 @@ impl Model {
         match result {
             Ok(()) if self.tun_permissions_ok() => {
                 self.log_app("info", self.tr_args("log.tun.permission_granted", &[]));
-                Ok(())
+                Ok(true)
             }
             Ok(()) => Err(self.tr_args("app.tun.error.permission_verify_failed", &[])),
             Err(sysproxy::Error::AuthorizationCancelled) => Err(cancelled),
             Err(sysproxy::Error::InstallFailed(m)) => Err(self.tr_args("app.tun.error.authorization_failed", &[&m])),
             Err(e) => Err(self.sp_error(&e)),
         }
+    }
+
+    /// TUN on a core that just got root: kept on (with `stack`), the core
+    /// restarts as the privileged process, and its start turns TUN on from
+    /// the kept settings (or the request after it, should it not).
+    async fn restart_for_tun(&self, stack: Option<String>) -> Result<(), String> {
+        self.settings.update(|s| {
+            if let Some(stack) = stack.clone() {
+                s.tun_stack = Some(stack);
+            }
+            if let Some(c) = s.core_settings.as_mut() {
+                c.tun_enabled = true;
+            }
+        });
+        self.log_app("info", self.tr_args("log.tun.restarting_with_root", &[]));
+        self.restart_core().await;
+        if !self.is_live_untracked() {
+            return Err(self.tr_args("app.tun.error.runtime_state_mismatch", &[]));
+        }
+        self.refresh_from_api().await;
+        if !self.tun_enabled() {
+            self.patch_tun(true, stack).await?;
+            self.refresh_from_api().await;
+        }
+        if self.tun_enabled() { Ok(()) } else { Err(self.tr_args("app.tun.error.runtime_state_mismatch", &[])) }
     }
 
     pub(crate) fn preferred_tun_stack(&self) -> Option<String> {
@@ -268,8 +295,8 @@ impl Model {
         }
         self.tun_syncing.set(true);
         let result: Result<(), String> = async {
-            if enabled {
-                self.ensure_tun_permissions(true).await?;
+            if enabled && self.ensure_tun_permissions(true).await? && self.is_live_untracked() {
+                return self.restart_for_tun(None).await;
             }
             if !self.is_live_untracked() {
                 return Ok(());
@@ -293,7 +320,9 @@ impl Model {
                 self.log_app("info", self.tr_args("log.tun.toggled", &[&state]));
             }
             Err(e) => {
-                self.log_app("error", self.tr_args("log.tun.toggle_failed", &[&e]));
+                let message = self.tr_args("log.tun.toggle_failed", &[&e]);
+                self.log_app("error", message.clone());
+                self.feedback_error(message);
                 self.refresh_from_api().await;
             }
         }
@@ -314,7 +343,9 @@ impl Model {
         }
         self.tun_syncing.set(true);
         let result: Result<(), String> = async {
-            self.ensure_tun_permissions(true).await?;
+            if self.ensure_tun_permissions(true).await? && self.is_live_untracked() {
+                return self.restart_for_tun(Some(stack.to_owned())).await;
+            }
             if !self.is_live_untracked() {
                 return Ok(());
             }
@@ -338,7 +369,9 @@ impl Model {
                 self.log_app("info", self.tr_args("log.tun.stack_changed", &[&stack]));
             }
             Err(e) => {
-                self.log_app("error", self.tr_args("log.tun.toggle_failed", &[&e]));
+                let message = self.tr_args("log.tun.toggle_failed", &[&e]);
+                self.log_app("error", message.clone());
+                self.feedback_error(message);
                 self.refresh_from_api().await;
             }
         }

@@ -47,26 +47,31 @@ fn fit_window_to_content(m: Model, win: nsh_core::element::desktop::WindowRef, c
     static GENERATION: AtomicU64 = AtomicU64::new(0);
     let generation = GENERATION.fetch_add(1, Ordering::Relaxed) + 1;
     // A new panel window (one each time it opens) starts at its default
-    // size: the height set for the last one is not this one's. It opens at
-    // that height, though, so it does not jump to the default first.
-    if let Some(h) = LAST_HEIGHT.with(|h| h.take()) {
+    // size, and the height set for the last one was its own: it opens at
+    // the height the tab it opens on had last (the node tab's, not the
+    // taller settings' it may have closed on), and its first fit lands at
+    // once, as it appears, rather than easing.
+    LAST_HEIGHT.with(|h| h.set(None));
+    if let Some(h) = tab_height(m.tab.get_untracked()) {
         win.set_bounds(nsh_core::desktop::WindowFrame {
             width: Some(Points(style::PANEL_WIDTH)),
             height: Some(Points(h)),
             ..Default::default()
         });
+        LAST_HEIGHT.with(|last| last.set(Some(h)));
     }
+    let first = std::rc::Rc::new(std::cell::Cell::new(true));
     {
-        let (m, win, column) = (m.clone(), win.clone(), column.clone());
+        let (m, win, column, first) = (m.clone(), win.clone(), column.clone(), first.clone());
         effect(move || {
-            let _ = m.tab.get();
-            let (win, column) = (win.clone(), column.clone());
+            let tab = m.tab.get();
+            let (win, column, first) = (win.clone(), column.clone(), first.clone());
             untracked(|| {
                 crate::model::run_root(async move {
                     fit_trace("tab changed");
                     // The new tab's views lay out first (two frames).
                     timer(std::time::Duration::from_millis(32)).await;
-                    fit_once(&win, &column).await;
+                    fit_once(&win, &column, tab, &first).await;
                 });
             });
         });
@@ -74,7 +79,7 @@ fn fit_window_to_content(m: Model, win: nsh_core::element::desktop::WindowRef, c
     crate::model::run_root(async move {
         while m.panel_visible.get_untracked() && GENERATION.load(Ordering::Relaxed) == generation {
             if !RESIZING.load(Ordering::Relaxed) {
-                fit_once(&win, &column).await;
+                fit_once(&win, &column, m.tab.get_untracked(), &first).await;
             }
             timer(std::time::Duration::from_millis(250)).await;
         }
@@ -102,10 +107,36 @@ thread_local! {
     static LAST_HEIGHT: std::cell::Cell<Option<f32>> = const { std::cell::Cell::new(None) };
 }
 
+thread_local! {
+    /// Each tab's height when the panel last fitted it (node, system).
+    static TAB_HEIGHTS: std::cell::Cell<[Option<f32>; 2]> = const { std::cell::Cell::new([None, None]) };
+}
+
+fn tab_index(tab: crate::model::RootTab) -> usize {
+    match tab {
+        crate::model::RootTab::Proxy => 0,
+        crate::model::RootTab::System => 1,
+    }
+}
+
+fn tab_height(tab: crate::model::RootTab) -> Option<f32> {
+    TAB_HEIGHTS.with(|t| t.get()[tab_index(tab)])
+}
+
+fn remember_tab_height(tab: crate::model::RootTab, h: f32) {
+    TAB_HEIGHTS.with(|t| {
+        let mut all = t.get();
+        all[tab_index(tab)] = Some(h);
+        t.set(all);
+    });
+}
+
 /// A resize is easing (the periodic check leaves it alone).
 static RESIZING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-async fn fit_once(win: &nsh_core::element::desktop::WindowRef, column: &ElementRef) {
+/// Fits the window to `tab`'s content; the first fit of a window that just
+/// opened (`first`, cleared once a fit resizes) lands without easing.
+async fn fit_once(win: &nsh_core::element::desktop::WindowRef, column: &ElementRef, tab: crate::model::RootTab, first: &std::cell::Cell<bool>) {
     use std::sync::atomic::{AtomicU64, Ordering};
     static TWEEN: AtomicU64 = AtomicU64::new(0);
     let (Some(measured), Some(state)) = (column.measure().await, win.state()) else { return };
@@ -116,11 +147,18 @@ async fn fit_once(win: &nsh_core::element::desktop::WindowRef, column: &ElementR
     let visible = crate::geometry::visible_frame_at(bounds.origin.x.0 + bounds.size.width.0 / 2.0);
     let max = (visible.max_y() - top - 8.0).max(240.0);
     let target = content.min(max);
+    if content > 0.0 {
+        remember_tab_height(tab, target.round());
+    }
     let from = LAST_HEIGHT.with(|h| h.get()).unwrap_or(bounds.size.height.0);
     let width_off = LAST_HEIGHT.with(|h| h.get()).is_none() && (bounds.size.width.0 - style::PANEL_WIDTH).abs() > 0.5;
     if content <= 0.0 || ((target - from).abs() <= 0.5 && !width_off) {
+        if content > 0.0 {
+            first.set(false);
+        }
         return;
     }
+    let instant = first.replace(false);
     let set = |h: f32| {
         LAST_HEIGHT.with(|last| last.set(Some(h.round())));
         win.set_bounds(nsh_core::desktop::WindowFrame {
@@ -130,7 +168,7 @@ async fn fit_once(win: &nsh_core::element::desktop::WindowRef, column: &ElementR
         });
     };
     let tween = TWEEN.fetch_add(1, Ordering::Relaxed) + 1;
-    if nsh_core::prelude::reduce_motion() || (target - from).abs() < 4.0 {
+    if instant || nsh_core::prelude::reduce_motion() || (target - from).abs() < 4.0 {
         set(target);
         return;
     }

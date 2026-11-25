@@ -179,6 +179,8 @@ fn panel_app() -> impl IntoElement {
                 if let Some(icon) = icon {
                     panel_origin.set(Some(crate::geometry::panel_origin(icon, crate::style::PANEL_WIDTH, 4.0)));
                 }
+                // It opens on the node tab every time.
+                m.tab.set(crate::model::RootTab::Proxy);
                 m.panel_visible.set(true);
             }
         })

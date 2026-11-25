@@ -184,7 +184,8 @@ test("applies core settings and lays them over a restart", async () => {
 
 test("shows the system proxy and TUN rows; the proxy needs the bundled helper", async () => {
   const app = await open(".", { platform: "macos", locale: "zh-Hans-CN", network: "live" });
-  for (const label of ["系统代理", "TUN 模式", "system", "gvisor", "mixed", "mips"]) {
+  // The TUN stack is a menu showing the one TUN turns on with.
+  for (const label of ["系统代理", "TUN 模式", "mixed"]) {
     await app.waitFor(label);
   }
   await app.press("启动内核 >> nth=1");

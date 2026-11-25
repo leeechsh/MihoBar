@@ -294,7 +294,7 @@
 "ui.network.sort.upload_desc": "Upload High to Low",
 "ui.placeholder.filter_connection": "Filter domain, IP...",
 "ui.placeholder.filter_rule": "Filter target, type, policy...",
-"ui.placeholder.port": "0",
+"ui.placeholder.port": "Off",
 "ui.placeholder.search_logs": "Search logs...",
 "ui.placeholder.system_proxy_exception": "Host, domain, CIDR, or <local>",
 "ui.quick.configs.local_section": "Local Configs",
@@ -508,5 +508,18 @@
 "ui.updates.core_newer": "%@ → %@",
 "ui.updates.auto_core": "Update Core Automatically",
 "log.core_update.check_failed": "Couldn't check for a core update: %@",
-"log.core_update.available": "Core %@ is available (running %@)"
+"log.core_update.available": "Core %@ is available (running %@)",
+"log.tun.restarting_with_root": "The core has the permission TUN needs: restarting it to turn TUN on",
+"ui.quick.copied": "Copied",
+"ui.quick.copy_terminal_hint": "Copy the terminal proxy command (export https_proxy / http_proxy / all_proxy)",
+"ui.updates.checking": "Checking…",
+"ui.updates.up_to_date": "Up to date",
+"ui.updates.failed": "Check failed",
+"ui.updates.install": "Update",
+"log.app_update.available": "MihoBar %@ is available (running %@)",
+"log.app_update.check_failed": "Couldn't check for a MihoBar update: %@",
+"ui.updates.latest": "Latest %@",
+"z.usage_settings": "Usage settings",
+"z.keep_data": "Keep data",
+"z.tracking_off": "Not tracking"
 }

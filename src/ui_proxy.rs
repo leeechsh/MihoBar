@@ -125,7 +125,9 @@ pub fn proxy_tab(m: Model, win: WindowRef) -> impl IntoElement {
                     move |_: &MouseEvent| close()
                 })
                 .child(view().on_mouse_enter(close_configs_on_hover(&m)).child(traffic_overview(m.clone())))
-                .child(quick_rows(m.clone(), win.clone())),
+                .child(quick_rows(m.clone(), win.clone()))
+                // A failed switch (TUN, the system proxy) says why here.
+                .child(crate::ui_settings::feedback_banner(m.clone())),
         )
         .child(when(
             {
@@ -320,6 +322,39 @@ fn quick_row(
 /// Where a card's dividers start: past the row's tile.
 const ROW_INSET: f32 = style::SPACE6 + style::TILE + 10.0;
 
+/// A quick row's value (the mode, the config, the TUN stack, the proxy
+/// address): a capsule of the control track with the value and an icon
+/// saying what pressing it does (`›` a submenu beside, `⌃⌄` a menu, a copy
+/// mark), the same in every row.
+fn value_pill(content: impl IntoElement, trailing: impl Fn() -> String + 'static, tint: impl Fn() -> AdaptiveColor + 'static) -> nsh_core::element::View {
+    view()
+        .flex_row()
+        .items_center()
+        .gap(px(5.0))
+        .h(px(22.0))
+        .pl(px(8.0))
+        .pr(px(6.0))
+        .rounded(px(style::CONTROL_RADIUS))
+        .bg(style::control_track())
+        .child(content)
+        .child(image(move || ImageSrc::from(trailing())).w(px(10.0)).h(px(10.0)).tint_color(move || tint()))
+}
+
+/// A pill's value text.
+fn pill_text(value: impl Fn() -> String + 'static, color: impl Fn() -> AdaptiveColor + 'static) -> nsh_core::element::Text {
+    text(value).truncate().text_size(px(font::CALLOUT)).font_weight(FontWeight::MEDIUM).tabular_nums().text_color(move || color())
+}
+
+/// The outbound mode's color: rule indigo, global orange, direct gray.
+fn mode_color(mode: Option<crate::model::CoreMode>) -> AdaptiveColor {
+    match mode {
+        Some(crate::model::CoreMode::Global) => style::warning(),
+        Some(crate::model::CoreMode::Direct) => style::tertiary_label(),
+        Some(_) => style::indigo(),
+        None => style::tertiary_label(),
+    }
+}
+
 /// The outbound mode row: the current mode, and the modes in a native
 /// submenu opened beside the row (rule / global / direct).
 fn mode_row(m: Model, win: WindowRef) -> impl IntoElement {
@@ -333,19 +368,25 @@ fn mode_row(m: Model, win: WindowRef) -> impl IntoElement {
             let m = m.clone();
             move || m.tr("ui.quick.outbound_mode")
         },
-        view()
-            .flex_row()
-            .items_center()
-            .gap(px(style::SPACE2))
-            .child(
-                text(move || match detail_m.mode.get() {
-                    Some(mode) => detail_m.tr(mode.title_key()),
-                    None => "--".into(),
-                })
-                .text_size(px(font::CAPTION))
-                .text_color(style::secondary_label()),
-            )
-            .child(icon_view(icons::chevron_right(), 9.0, style::tertiary_label)),
+        value_pill(
+            view()
+                .flex_row()
+                .items_center()
+                .gap(px(5.0))
+                .child(view().w(px(6.0)).h(px(6.0)).rounded(px(3.0)).bg({
+                    let m = detail_m.clone();
+                    move || mode_color(m.mode.get())
+                }))
+                .child(pill_text(
+                    move || match detail_m.mode.get() {
+                        Some(mode) => detail_m.tr(mode.title_key()),
+                        None => "--".into(),
+                    },
+                    style::primary_label,
+                )),
+            icons::chevron_right,
+            style::tertiary_label,
+        ),
     )
     .element_ref(&row)
     .hover(|s| s.bg(style::fill(0.05)))
@@ -394,21 +435,18 @@ fn quick_rows(m: Model, win: WindowRef) -> impl IntoElement {
             let m = m.clone();
             move || m.tr("ui.quick.switch_config")
         },
-        view()
-            .flex_row()
-            .items_center()
-            .gap(px(style::SPACE2))
-            .max_w(px(180.0))
-            .child(
-                text({
+        value_pill(
+            pill_text(
+                {
                     let m = m.clone();
                     move || m.selected_config_name().unwrap_or_else(|| m.tr("ui.common.unknown"))
-                })
-                .truncate()
-                .text_size(px(font::CAPTION))
-                .text_color(style::secondary_label()),
-            )
-            .child(icon_view(icons::chevron_right(), 9.0, style::tertiary_label)),
+                },
+                style::primary_label,
+            ),
+            icons::chevron_right,
+            style::tertiary_label,
+        )
+        .max_w(px(170.0)),
     )
     .element_ref(&config_ref)
     .hover(|s| s.bg(style::fill(0.05)))
@@ -432,36 +470,36 @@ fn quick_rows(m: Model, win: WindowRef) -> impl IntoElement {
             let m = m.clone();
             move || m.tr("ui.quick.copy_terminal")
         },
-        view()
-            .flex_row()
-            .items_center()
-            .gap(px(style::SPACE4))
-            .h(px(20.0))
-            .px(px(7.0))
-            .rounded(px(10.0))
-            .bg(move || if copied.get() { style::positive().opacity(0.16) } else { style::control_track() })
-            .tooltip(crate::widgets::tip({
-                let m = m.clone();
-                move || format!("{}\n{}", m.tr("ui.quick.copy_terminal"), m.local_proxy_target_display())
-            }))
-            .on_press(move || {
-                copy_m.copy_proxy_command("127.0.0.1");
-                copied.set(true);
-                set_timeout(std::time::Duration::from_millis(1200), move || copied.set(false));
-            })
-            .child(
-                text("127.0.0.1")
-                    .text_size(px(font::CAPTION))
-                    .font_weight(FontWeight::MEDIUM)
-                    .tabular_nums()
-                    .text_color(move || if copied.get() { style::positive() } else { style::secondary_label() }),
-            )
-            .child(
-                image(move || ImageSrc::from(if copied.get() { icons::checkmark_circle_fill() } else { icons::doc_on_doc() }))
-                    .w(px(10.0))
-                    .h(px(10.0))
-                    .tint_color(move || if copied.get() { style::positive() } else { style::tertiary_label() }),
+        value_pill(
+            pill_text(
+                {
+                    let m = m.clone();
+                    move || {
+                        if copied.get() {
+                            m.tr("ui.quick.copied")
+                        } else {
+                            // No port while the core is stopped: the host alone.
+                            let target = m.local_proxy_target_display();
+                            target.strip_suffix(":0").map(str::to_owned).unwrap_or(target)
+                        }
+                    }
+                },
+                move || if copied.get() { style::positive() } else { style::primary_label() },
             ),
+            move || if copied.get() { icons::checkmark_circle_fill() } else { icons::doc_on_doc() },
+            move || if copied.get() { style::positive() } else { style::tertiary_label() },
+        )
+        .bg(move || if copied.get() { style::positive().opacity(0.16) } else { style::control_track() })
+        .hover(|s| s.bg(style::fill(0.1)))
+        .tooltip(crate::widgets::tip({
+            let m = m.clone();
+            move || m.tr("ui.quick.copy_terminal_hint")
+        }))
+        .on_press(move || {
+            copy_m.copy_proxy_command("127.0.0.1");
+            copied.set(true);
+            set_timeout(std::time::Duration::from_millis(1200), move || copied.set(false));
+        }),
     );
     // The other rows close the config menu as the pointer reaches them.
     let closes = |row: AnyElement| view().on_mouse_enter(close_configs_on_hover(&m)).child(row);
@@ -1321,7 +1359,8 @@ fn configs_menu(m: Model) -> impl IntoElement {
         widgets::section_title(move || m.tr(key), Some(count), view())
     };
     let (local_count, remote_count) = (local.clone(), remote.clone());
-    let (reload_m, finder_m, import_m, remote_m, update_m) = (m.clone(), m.clone(), m.clone(), m.clone(), m.clone());
+    // A subscription updates from its row's refresh button.
+    let (reload_m, finder_m, import_m, remote_m) = (m.clone(), m.clone(), m.clone(), m.clone());
     let tr = |m: &Model, key: &'static str| {
         let m = m.clone();
         move || m.tr(key)
@@ -1352,15 +1391,6 @@ fn configs_menu(m: Model) -> impl IntoElement {
             remote_m.side_measured.set(0.0);
             remote_m.side_popover.set(Some(SidePopover { kind: SideKind::ImportRemote, anchor_mid_y: anchor }));
         })
-        .into_element(),
-        menu_row(icons::arrow_down_circle_line(), style::positive, tr(&m, "ui.quick.update_remote_configs"), move || {
-            if update_m.config_busy.get_untracked().is_some() {
-                return;
-            }
-            let m = update_m.clone();
-            crate::model::run_root(async move { m.update_all_remote_configs().await });
-        })
-        .child(busy(&m, "ui.quick.update_remote_configs"))
         .into_element(),
         menu_row(icons::folder(), style::warning, tr(&m, "ui.quick.show_in_finder"), move || finder_m.show_config_dir()).into_element(),
     ]);
@@ -1833,38 +1863,54 @@ fn system_proxy_row(m: Model) -> impl IntoElement {
 
 /// The TUN quick row with its stack chips (ClashBar's `tunModeQuickToggleRow`).
 fn tun_row(m: Model) -> impl IntoElement {
-    let chips: Vec<_> = crate::features::TUN_STACKS
-        .iter()
-        .map(|&stack| {
-            let (a1, a3, en, press, tip) = (m.clone(), m.clone(), m.clone(), m.clone(), m.clone());
-            let active = move |m: &Model| m.tun_enabled() && m.tun_stack().as_deref() == Some(stack);
-            text(stack)
-                .text_size(px(font::CAPTION))
-                .font_weight(FontWeight::MEDIUM)
-                .text_color(move || if active(&a1) { style::positive() } else { style::secondary_label() })
-                .px(px(5.0))
-                .py(px(2.0))
-                .rounded(px(5.0))
-                .bg(move || if active(&a3) { style::positive().opacity(0.18) } else { style::fill(0.0) })
-                .opacity(move || {
-                    let enabled = en.is_live() && (stack != "mips" || en.is_mips_supported());
-                    if enabled { 1.0_f32 } else { 0.5_f32 }
+    // The stack: the core's while TUN is on, else the one it turns on with;
+    // choosing one turns TUN on with it (ClashBar's `selectTunStack`).
+    let (label_m, menu_m, dim_m) = (m.clone(), m.clone(), m.clone());
+    let stack = value_pill(
+        pill_text(
+            move || {
+                let current = if label_m.tun_enabled() { label_m.tun_stack() } else { None };
+                current.or_else(|| label_m.preferred_tun_stack()).unwrap_or_else(|| "mixed".into())
+            },
+            {
+                let m = m.clone();
+                move || if m.tun_enabled() { style::positive() } else { style::secondary_label() }
+            },
+        ),
+        icons::chevron_up_down_small,
+        style::tertiary_label,
+    )
+    .hover(|s| s.bg(style::fill(0.1)))
+    .opacity(move || if dim_m.is_live() { 1.0_f32 } else { 0.5_f32 })
+    .tooltip(crate::widgets::tip({
+        let m = m.clone();
+        move || m.tr("ui.quick.tun_stack_switch_hint")
+    }))
+    .on_press(move || {
+        let m = menu_m.clone();
+        if !m.is_live_untracked() {
+            return;
+        }
+        use nsh_core::element::desktop::{MenuItem, popup_menu};
+        let current = if m.tun_enabled() { m.tun_stack() } else { None };
+        let items = crate::features::TUN_STACKS
+            .iter()
+            .map(|&stack| {
+                let m2 = m.clone();
+                let supported = stack != "mips" || m.is_mips_supported();
+                let label = if supported {
+                    stack.to_owned()
+                } else {
+                    format!("{stack} ({})", m.tr_args("app.tun.mips_requires_upgrade", &[&crate::features::MIPS_MIN_CORE]))
+                };
+                MenuItem::new(label).checked(current.as_deref() == Some(stack)).disabled(!supported).on_select(move || {
+                    let m = m2.clone();
+                    crate::model::run_root(async move { m.select_tun_stack(stack).await });
                 })
-                .tooltip(crate::widgets::tip(move || {
-                    if stack == "mips" && !tip.is_mips_supported() {
-                        tip.tr_args("app.tun.mips_requires_upgrade", &[&crate::features::MIPS_MIN_CORE])
-                    } else {
-                        tip.tr("ui.quick.tun_stack_switch_hint")
-                    }
-                }))
-                .on_press(move || {
-                    if press.is_live_untracked() {
-                        let m = press.clone();
-                        crate::model::run_root(async move { m.select_tun_stack(stack).await });
-                    }
-                })
-        })
-        .collect();
+            })
+            .collect();
+        let _ = popup_menu(items);
+    });
     let (on_m, dis_m, toggle_m, title_m) = (m.clone(), m.clone(), m.clone(), m.clone());
     view()
         .flex_row()
@@ -1875,7 +1921,7 @@ fn tun_row(m: Model) -> impl IntoElement {
         .child(widgets::tile(icons::shield(), style::positive))
         .child(text(move || title_m.tr("ui.quick.tun_mode")).text_size(px(font::BODY)).font_weight(FontWeight::MEDIUM).text_color(style::primary_label()))
         .child(view().flex_1())
-        .child(view().flex_row().gap(px(1.0)).p(px(2.0)).rounded(px(style::ROW_RADIUS)).bg(style::control_track()).children(chips))
+        .child(stack)
         .child(
             view()
                 .ml(px(style::SPACE4))

@@ -338,18 +338,6 @@ fn select(label: impl Fn() -> String + 'static, items: impl Fn() -> Vec<MenuItem
         .child(glyph(icons::z_chevron_down(), 11.0, || z::text(0.6)))
 }
 
-/// A ghost button (`btn-ghost btn-sm`).
-fn ghost(label: impl Fn() -> String + 'static, color: impl Fn() -> AdaptiveColor + 'static, on_press: impl Fn() + 'static) -> impl IntoElement {
-    view()
-        .h(px(32.0))
-        .px(px(12.0))
-        .justify_center()
-        .rounded(px(8.0))
-        .hover(|s| s.bg(z::text(0.06)))
-        .on_press(on_press)
-        .child(text(label).text_size(px(13.0)).font_weight(FontWeight::SEMIBOLD).text_color(move || color()))
-}
-
 fn usage_toolbar(m: Model, state: UsageState, refresh: Rc<dyn Fn()>, dir: std::path::PathBuf) -> impl IntoElement {
     let tabs: Vec<_> = Dimension::ALL
         .iter()
@@ -403,59 +391,36 @@ fn usage_toolbar(m: Model, state: UsageState, refresh: Rc<dyn Fn()>, dir: std::p
                 .collect()
         },
     );
-    let keep_m = m.clone();
-    let keep_items_m = m.clone();
-    let keep_dir = dir.clone();
-    let retention = select(
-        move || keep_m.tr(RETENTIONS.iter().find(|(v, _)| *v == state.config.get().retention_secs).map_or("z.last_month", |(_, k)| *k)),
-        move || {
-            RETENTIONS
-                .iter()
-                .map(|&(v, k)| {
-                    let dir = keep_dir.clone();
-                    MenuItem::new(keep_items_m.tr(k)).checked(state.config.get_untracked().retention_secs == v).on_select(move || {
-                        state.config.update(|c| c.retention_secs = v);
-                        state.config.get_untracked().save(&dir);
-                    })
-                })
-                .collect()
-        },
-    );
-    let track_dir = dir.clone();
-    let track_m = m.clone();
-    let tracking = view()
-        .flex_row()
-        .items_center()
-        .gap(px(8.0))
-        .px(px(4.0))
-        .on_press(move || {
+    // The settings: tracking, how long usage is kept, clearing it (in a
+    // menu, so the toolbar fits a 1000 pt window, a narrow display's).
+    let settings_m = m.clone();
+    let settings_label_m = m.clone();
+    let settings_dir = dir.clone();
+    let settings_refresh = refresh.clone();
+    let settings = crate::ui_zconns::icon_button(icons::z_tools, move || settings_label_m.tr("z.usage_settings"), move || {
+        let m = settings_m.clone();
+        let config = state.config.get_untracked();
+        let track_dir = settings_dir.clone();
+        let tracking = MenuItem::new(m.tr("z.tracking")).checked(config.tracking).on_select(move || {
             state.config.update(|c| c.tracking = !c.tracking);
             state.config.get_untracked().save(&track_dir);
-        })
-        .child(crate::widgets::switch(move || state.config.get().tracking, || false))
-        .child(text(move || track_m.tr("z.tracking")).text_size(px(13.0)).text_color(z::text(1.0)));
-    let refresh_m = m.clone();
-    let clear_label_m = m.clone();
-    let clear_m = m.clone();
-    let refresh2 = refresh.clone();
-    card()
-        .flex_row()
-        .flex_wrap()
-        .items_center()
-        .gap(px(12.0))
-        .px(px(16.0))
-        .py(px(12.0))
-        .child(segmented)
-        .child(view().flex_1().min_w(px(0.0)))
-        .child(range)
-        .child(retention)
-        .child(tracking)
-        .child(ghost(move || refresh_m.tr("z.refresh"), || z::text(1.0), move || refresh()))
-        .child(ghost(move || clear_label_m.tr("z.clear_usage"), z::error, move || {
-            let m = clear_m.clone();
-            let dir = dir.clone();
-            let refresh = refresh2.clone();
-            spawn(async move {
+        });
+        let keep: Vec<MenuItem> = RETENTIONS
+            .iter()
+            .map(|&(v, k)| {
+                let dir = settings_dir.clone();
+                MenuItem::new(m.tr(k)).checked(config.retention_secs == v).on_select(move || {
+                    state.config.update(|c| c.retention_secs = v);
+                    state.config.get_untracked().save(&dir);
+                })
+            })
+            .collect();
+        let kept = RETENTIONS.iter().find(|(v, _)| *v == config.retention_secs).map_or("z.last_month", |(_, k)| *k);
+        let keep = MenuItem::submenu(format!("{} · {}", m.tr("z.keep_data"), m.tr(kept)), keep);
+        let (clear_m, clear_dir, clear_refresh) = (m.clone(), settings_dir.clone(), settings_refresh.clone());
+        let clear = MenuItem::new(format!("{}…", m.tr("z.clear_usage"))).destructive(true).on_select(move || {
+            let (m, dir, refresh) = (clear_m.clone(), clear_dir.clone(), clear_refresh.clone());
+            crate::model::run_root(async move {
                 let answer = nsh_base::alert_dialog()
                     .title(m.tr("z.confirm_clear_usage"))
                     .destructive("clear", m.tr("z.clear_usage"))
@@ -469,7 +434,38 @@ fn usage_toolbar(m: Model, state: UsageState, refresh: Rc<dyn Fn()>, dir: std::p
                     refresh();
                 }
             });
-        }))
+        });
+        let _ = popup_menu(vec![tracking, keep, MenuItem::separator(), clear]);
+    });
+    // Tracking off shows: usage is not being recorded.
+    let paused_m = m.clone();
+    let paused = when(
+        move || !state.config.get().tracking,
+        move || {
+            text(paused_m.tr("z.tracking_off"))
+                .text_size(px(12.0))
+                .font_weight(FontWeight::MEDIUM)
+                .text_color(z::warning())
+                .px(px(8.0))
+                .py(px(3.0))
+                .rounded(px(6.0))
+                .bg(z::warning().opacity(0.12))
+        },
+    );
+    let refresh_m = m.clone();
+    card()
+        .flex_row()
+        .flex_wrap()
+        .items_center()
+        .gap(px(12.0))
+        .px(px(16.0))
+        .py(px(12.0))
+        .child(segmented)
+        .child(view().flex_1().min_w(px(0.0)))
+        .child(paused)
+        .child(range)
+        .child(crate::ui_zconns::icon_button(icons::z_refresh, move || refresh_m.tr("z.refresh"), move || refresh()))
+        .child(settings)
 }
 
 fn summary_tile(icon: String, label: impl Fn() -> String + 'static, value: impl Fn() -> String + 'static) -> impl IntoElement {
@@ -531,7 +527,7 @@ fn usage_top(m: Model, state: UsageState) -> impl IntoElement {
                 .mb(px(12.0))
                 .child(glyph(icons::z_usage(), 16.0, || z::primary(1.0)))
                 .child(
-                    text(move || format!("{}{}", title_m.tr("z.top_usage"), dimension_label(&title_m, state.dimension.get())))
+                    text(move || format!("{} · {}", title_m.tr("z.top_usage"), dimension_label(&title_m, state.dimension.get())))
                         .text_size(px(15.0))
                         .font_weight(FontWeight::SEMIBOLD)
                         .text_color(z::text(0.8)),
@@ -787,7 +783,7 @@ fn usage_details(m: Model, state: UsageState) -> impl IntoElement {
                 .border_color(z::base300(0.6))
                 .child(glyph(icons::z_bars(), 18.0, || z::primary(1.0)))
                 .child(
-                    text(move || format!("{}{}", title_m.tr("z.usage_details"), detail_label()))
+                    text(move || format!("{} · {}", title_m.tr("z.usage_details"), detail_label()))
                         .flex_1()
                         .text_size(px(15.0))
                         .font_weight(FontWeight::SEMIBOLD)
