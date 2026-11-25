@@ -17,7 +17,7 @@ GPL-3.0). Like ClashBar, MihoBar is licensed under the
 
 ## Install
 
-Download `MihoBar-<version>-macos-arm64.dmg` (Apple silicon) or
+Download `MihoBar-<version>-macos-aarch64.dmg` (Apple silicon) or
 `MihoBar-<version>-macos-x86_64.dmg` (Intel) from
 [Releases](../../releases/latest), open it and drag MihoBar to Applications
 (run it from there: the helper installs only from `/Applications`). MihoBar

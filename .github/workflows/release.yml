@@ -32,9 +32,13 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # `platform`: Rust's name for the architecture, which NSH's
+          # updater looks up in latest.json (`macos-aarch64`, not arm64).
           - arch: arm64
+            platform: aarch64
             runner: macos-15
           - arch: x86_64
+            platform: x86_64
             runner: macos-15-intel
     runs-on: ${{ matrix.runner }}
     steps:
@@ -86,7 +90,7 @@ jobs:
         run: |
           # `<name>-<version>-<os>-<arch>`, as nsh update-manifest reads it;
           # the zip holds the app alone (no __MACOSX), as the updater needs.
-          name="MihoBar-${{ steps.version.outputs.version }}-macos-${{ matrix.arch }}"
+          name="MihoBar-${{ steps.version.outputs.version }}-macos-${{ matrix.platform }}"
           mkdir -p dist dmg
           ditto -c -k --norsrc --keepParent .nsh/out/MihoBar.app "dist/$name.zip"
           ditto .nsh/out/MihoBar.app dmg/MihoBar.app
