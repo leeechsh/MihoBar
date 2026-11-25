@@ -141,39 +141,53 @@ pub fn proxy_tab(m: Model, win: WindowRef) -> impl IntoElement {
 
 // --- Traffic overview -------------------------------------------------------
 
-/// The sparkline's paths (ClashBar's `TrafficSparklineView`): upload
-/// above the axis, download below, the newest sample at the right. SVG
-/// path data: the up area, the down area, the up line, the down line.
-fn sparkline_paths(h: &TrafficHistory, width: f32, height: f32) -> [String; 4] {
-    let max_y = h.up.iter().chain(h.down.iter()).copied().max().unwrap_or(0).max(1) as f32;
-    let axis = (height * 0.5).floor();
-    let upper = (axis - 2.0).max(1.0);
-    let lower = (height - axis - 2.0).max(1.0);
+thread_local! {
+    /// The chart's Y range as drawn: eased toward the range its samples
+    /// need, so a burst does not make it jump.
+    static CHART_SCALE: std::cell::Cell<f32> = const { std::cell::Cell::new(0.0) };
+}
+
+/// The Y range for the samples (bytes a second): the larger series' peak
+/// with headroom, at least 1 KB/s; eased from the last range, up fast (a
+/// burst is clipped for a moment only) and down slowly.
+fn chart_scale(h: &TrafficHistory) -> f32 {
+    let peak = h.up.iter().chain(h.down.iter()).copied().max().unwrap_or(0).max(0) as f32;
+    let target = (peak * 1.15).max(1024.0);
+    CHART_SCALE.with(|scale| {
+        let last = scale.get();
+        let next = if last <= 0.0 {
+            target
+        } else if target > last {
+            last + (target - last) * 0.5
+        } else {
+            last + (target - last) * 0.15
+        };
+        scale.set(next);
+        next
+    })
+}
+
+/// A series' area and line (SVG path data) rising from the baseline at the
+/// bottom, the newest sample at the right, on the shared `scale`.
+fn series_paths(values: &std::collections::VecDeque<i64>, scale: f32, width: f32, height: f32) -> (String, String) {
+    let base = height - 1.0;
     let step = width / (HISTORY_MAX_POINTS as f32 - 1.0);
-    let points = |values: &std::collections::VecDeque<i64>, up: bool| -> Vec<(f32, f32)> {
-        let n = values.len();
-        values
-            .iter()
-            .enumerate()
-            .map(|(i, &v)| {
-                let x = width - (n - 1 - i) as f32 * step;
-                let ratio = (v.max(0) as f32).min(max_y) / max_y;
-                let y = if up { axis - ratio * upper } else { axis + ratio * lower };
-                (x, y)
-            })
-            .collect()
+    let n = values.len();
+    let pts: Vec<(f32, f32)> = values
+        .iter()
+        .enumerate()
+        .map(|(i, &v)| {
+            let x = width - (n - 1 - i) as f32 * step;
+            let ratio = (v.max(0) as f32 / scale).min(1.0);
+            (x, base - ratio * (height - 3.0))
+        })
+        .collect();
+    let line: String = pts.iter().enumerate().map(|(i, (x, y))| format!("{}{x:.1} {y:.1}", if i == 0 { "M" } else { "L" })).collect();
+    let area = match (pts.first(), pts.last()) {
+        (Some(first), Some(last)) => format!("{line}L{:.1} {base}L{:.1} {base}Z", last.0, first.0),
+        _ => String::new(),
     };
-    let line = |pts: &[(f32, f32)]| -> String {
-        pts.iter().enumerate().map(|(i, (x, y))| format!("{}{x:.1} {y:.1}", if i == 0 { "M" } else { "L" })).collect()
-    };
-    let area = |pts: &[(f32, f32)]| -> String {
-        match (pts.first(), pts.last()) {
-            (Some(first), Some(last)) => format!("{}L{:.1} {axis}L{:.1} {axis}Z", line(pts), last.0, first.0),
-            _ => String::new(),
-        }
-    };
-    let (up, down) = (points(&h.up, true), points(&h.down, false));
-    [area(&up), area(&down), line(&up), line(&down)]
+    (area, line)
 }
 
 fn hsla(hex: u32, alpha: f32) -> Hsla {
@@ -186,36 +200,41 @@ fn hsla(hex: u32, alpha: f32) -> Hsla {
     .into()
 }
 
-/// The sparkline drawn on a canvas: one drawing, redrawn as the history
-/// changes (an image a second would fill the image caches).
+/// The last 60 seconds of traffic on a canvas: upload and download rising
+/// from one baseline, overlaid, on one Y range that follows them smoothly.
+/// Redrawn as a sample arrives (an image a second would fill the image
+/// caches).
 fn sparkline(m: Model, width: f32, height: f32) -> impl IntoElement {
     canvas(move || {
-        let [up_area, down_area, up_line, down_line] = m.history.with(|h| sparkline_paths(h, width, height));
-        let axis = (height * 0.5).floor();
-        let gradient = |hex: u32, top: f32, bottom: f32| {
+        let (up, down) = m.history.with(|h| {
+            let scale = chart_scale(h);
+            (series_paths(&h.up, scale, width, height), series_paths(&h.down, scale, width, height))
+        });
+        let gradient = |hex: u32, top: f32| {
             nsh_core::canvas::CanvasGradient::linear(point(px(0.0), px(0.0)), point(px(0.0), px(height)))
                 .add_color_stop(percentage(0.0), hsla(hex, top))
-                .add_color_stop(percentage(1.0), hsla(hex, bottom))
+                .add_color_stop(percentage(1.0), hsla(hex, 0.0))
         };
+        let base = height - 1.0;
         let mut painter = Painter::new()
             .begin_path()
-            .move_to(0.0, axis)
-            .line_to(width, axis)
-            .stroke_color(hsla(0x8e8e93, 0.35))
+            .move_to(0.0, base)
+            .line_to(width, base)
+            .stroke_color(hsla(0x8e8e93, 0.3))
             .line_width(0.65)
             .stroke();
-        if !up_area.is_empty() {
-            painter = painter.fill_style(gradient(0x0a84ff, 0.30, 0.02)).fill_svg(&up_area);
+        if !down.0.is_empty() {
+            painter = painter.fill_style(gradient(0x30d158, 0.22)).fill_svg(&down.0);
         }
-        if !down_area.is_empty() {
-            painter = painter.fill_style(gradient(0x30d158, 0.32, 0.0)).fill_svg(&down_area);
+        if !up.0.is_empty() {
+            painter = painter.fill_style(gradient(0x0a84ff, 0.22)).fill_svg(&up.0);
         }
-        painter = painter.line_width(1.2);
-        if !up_line.is_empty() {
-            painter = painter.stroke_color(hsla(0x0a84ff, 0.9)).stroke_svg(&up_line);
+        painter = painter.line_width(1.4);
+        if !down.1.is_empty() {
+            painter = painter.stroke_color(hsla(0x30d158, 0.95)).stroke_svg(&down.1);
         }
-        if !down_line.is_empty() {
-            painter = painter.stroke_color(hsla(0x30d158, 0.9)).stroke_svg(&down_line);
+        if !up.1.is_empty() {
+            painter = painter.stroke_color(hsla(0x0a84ff, 0.95)).stroke_svg(&up.1);
         }
         painter
     })
@@ -223,74 +242,87 @@ fn sparkline(m: Model, width: f32, height: f32) -> impl IntoElement {
     .h(px(height))
 }
 
-/// A rate with its arrow, and the total under it.
+/// A rate: its arrow, the number large and its unit small beside it, and
+/// the total under them.
 fn rate_stat(
     arrow: String,
     color: fn() -> AdaptiveColor,
     rate: impl Fn() -> String + 'static,
     total: impl Fn() -> String + 'static,
 ) -> impl IntoElement {
+    let rate = Rc::new(rate);
+    let (number, unit) = (rate.clone(), rate);
     view()
+        .flex_1()
+        .min_w(px(0.0))
         .gap(px(1.0))
         .child(
             view()
                 .flex_row()
-                .items_center()
-                .gap(px(5.0))
-                .child(widgets::icon(arrow, 12.0, color))
-                .child(text(rate).text_size(px(font::TITLE3)).font_weight(FontWeight::SEMIBOLD).tabular_nums().text_color(style::primary_label())),
+                .items_baseline()
+                .gap(px(4.0))
+                .child(view().self_center().child(widgets::icon(arrow, 11.0, color)))
+                .child(
+                    text(move || number().split(' ').next().unwrap_or("").to_owned())
+                        .text_size(px(font::TITLE3))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .tabular_nums()
+                        .text_color(style::primary_label()),
+                )
+                .child(
+                    text(move || unit().split(' ').nth(1).unwrap_or("").to_owned())
+                        .text_size(px(font::CAPTION))
+                        .text_color(style::secondary_label()),
+                ),
         )
-        .child(text(total).pl(px(17.0)).text_size(px(font::CAPTION)).tabular_nums().text_color(style::secondary_label()))
+        .child(text(total).pl(px(15.0)).text_size(px(font::CAPTION)).tabular_nums().text_color(style::secondary_label()))
 }
 
-/// A small metric chip (connections, memory).
-fn metric_chip(icon: String, color: fn() -> AdaptiveColor, value: impl Fn() -> String + 'static) -> impl IntoElement {
+/// A figure of the bottom row: an icon and its text (connections, memory).
+fn footnote(icon: String, value: impl Fn() -> String + 'static) -> impl IntoElement {
     view()
         .flex_row()
         .items_center()
-        .gap(px(4.0))
-        .px(px(6.0))
-        .h(px(18.0))
-        .rounded(px(9.0))
-        .bg(style::control_track())
-        .child(widgets::icon(icon, 10.0, color))
-        .child(text(value).text_size(px(font::CAPTION)).font_weight(FontWeight::MEDIUM).tabular_nums().text_color(style::secondary_label()))
+        .gap(px(5.0))
+        .child(widgets::icon(icon, 10.0, style::secondary_label))
+        .child(text(value).text_size(px(font::CAPTION)).tabular_nums().text_color(style::secondary_label()))
 }
 
+/// The traffic overview: the rates and their totals, the last minute's
+/// chart, and the connections and memory under it.
 fn traffic_overview(m: Model) -> impl IntoElement {
-    const HEIGHT: f32 = 40.0;
+    const HEIGHT: f32 = 30.0;
     let width = style::PANEL_WIDTH - style::SPACE8 * 2.0 - 10.0 * 2.0 - 2.0;
     let (up_m, up_total_m, down_m, down_total_m, conn_m, mem_m) = (m.clone(), m.clone(), m.clone(), m.clone(), m.clone(), m.clone());
     widgets::card()
         .p(px(10.0))
-        .gap(px(style::SPACE6))
+        .gap(px(style::SPACE4))
         .child(
             view()
                 .flex_row()
-                .items_start()
-                .gap(px(14.0))
+                .gap(px(12.0))
                 .child(rate_stat(
                     icons::arrow_up_circle(),
                     style::info,
                     move || format::speed(up_m.traffic.get().up),
-                    move || format::bytes_compact(up_total_m.history.with(|h| h.up_total)),
+                    move || up_total_m.tr_args("ui.overview.total", &[&format::bytes_compact(up_total_m.history.with(|h| h.up_total))]),
                 ))
                 .child(rate_stat(
                     icons::arrow_down_circle(),
                     style::positive,
                     move || format::speed(down_m.traffic.get().down),
-                    move || format::bytes_compact(down_total_m.history.with(|h| h.down_total)),
-                ))
-                .child(view().flex_1())
-                .child(
-                    view()
-                        .gap(px(4.0))
-                        .items_end()
-                        .child(metric_chip(icons::link(), style::indigo, move || conn_m.connections_count.get().to_string()))
-                        .child(metric_chip(icons::memorychip(), style::teal, move || format::bytes_integer(mem_m.memory.get()))),
-                ),
+                    move || down_total_m.tr_args("ui.overview.total", &[&format::bytes_compact(down_total_m.history.with(|h| h.down_total))]),
+                )),
         )
         .child(sparkline(m, width, HEIGHT))
+        .child(
+            view()
+                .flex_row()
+                .items_center()
+                .justify_between()
+                .child(footnote(icons::link(), move || conn_m.tr_args("ui.overview.connections", &[&conn_m.connections_count.get()])))
+                .child(footnote(icons::memorychip(), move || format::bytes_integer(mem_m.memory.get()))),
+        )
 }
 
 // --- Quick rows --------------------------------------------------------------
@@ -345,22 +377,48 @@ fn pill_text(value: impl Fn() -> String + 'static, color: impl Fn() -> AdaptiveC
     text(value).truncate().text_size(px(font::CALLOUT)).font_weight(FontWeight::MEDIUM).tabular_nums().text_color(move || color())
 }
 
-/// The outbound mode's color: rule indigo, global orange, direct gray.
-fn mode_color(mode: Option<crate::model::CoreMode>) -> AdaptiveColor {
-    match mode {
-        Some(crate::model::CoreMode::Global) => style::warning(),
-        Some(crate::model::CoreMode::Direct) => style::tertiary_label(),
-        Some(_) => style::indigo(),
-        None => style::tertiary_label(),
-    }
-}
-
-/// The outbound mode row: the current mode, and the modes in a native
-/// submenu opened beside the row (rule / global / direct).
+/// The proxy mode row: rule / global / direct as a segmented control,
+/// the core's mode chosen (one press switches it).
 fn mode_row(m: Model, win: WindowRef) -> impl IntoElement {
-    let row = element_ref();
-    let (detail_m, press_m, dim_m) = (m.clone(), m.clone(), m.clone());
     let _ = win;
+    let segments: Vec<_> = crate::model::CoreMode::ALL
+        .iter()
+        .map(|&mode| {
+            let (on_m, on2_m, on3_m, label_m, name_m, press_m) = (m.clone(), m.clone(), m.clone(), m.clone(), m.clone(), m.clone());
+            let on = move || on_m.mode.get() == Some(mode);
+            let on2 = move || on2_m.mode.get() == Some(mode);
+            // The chosen mode reads as selected (screen readers, tests).
+            let state = move || {
+                let mut s = AccessibilityState::default();
+                s.selected = on3_m.mode.get() == Some(mode);
+                s
+            };
+            view()
+                .h(px(22.0))
+                .px(px(8.0))
+                .items_center()
+                .justify_center()
+                .rounded(px(style::CONTROL_RADIUS - 1.0))
+                .bg(move || if on2() { style::elevated() } else { style::fill(0.0) })
+                .transition_colors()
+                .duration(120.0)
+                .label(move || name_m.tr(mode.title_key()))
+                .accessibility_state(state)
+                .on_press(move || {
+                    if press_m.is_mode_switch_enabled() {
+                        let m = press_m.clone();
+                        crate::model::run_root(async move { m.switch_mode(mode).await });
+                    }
+                })
+                .child(
+                    text(move || label_m.tr(mode.title_key()))
+                        .text_size(px(font::CALLOUT))
+                        .font_weight(FontWeight::MEDIUM)
+                        .text_color(move || if on() { style::primary_label() } else { style::secondary_label() }),
+                )
+        })
+        .collect();
+    let dim_m = m.clone();
     quick_row(
         icons::shuffle(),
         style::indigo,
@@ -368,60 +426,16 @@ fn mode_row(m: Model, win: WindowRef) -> impl IntoElement {
             let m = m.clone();
             move || m.tr("ui.quick.outbound_mode")
         },
-        value_pill(
-            view()
-                .flex_row()
-                .items_center()
-                .gap(px(5.0))
-                .child(view().w(px(6.0)).h(px(6.0)).rounded(px(3.0)).bg({
-                    let m = detail_m.clone();
-                    move || mode_color(m.mode.get())
-                }))
-                .child(pill_text(
-                    move || match detail_m.mode.get() {
-                        Some(mode) => detail_m.tr(mode.title_key()),
-                        None => "--".into(),
-                    },
-                    style::primary_label,
-                )),
-            icons::chevron_right,
-            style::tertiary_label,
-        ),
+        view()
+            .flex_row()
+            .items_center()
+            .gap(px(1.0))
+            .p(px(2.0))
+            .rounded(px(style::CONTROL_RADIUS + 1.0))
+            .bg(style::control_track())
+            .opacity(move || if dim_m.is_mode_switch_enabled() { 1.0_f32 } else { 0.5_f32 })
+            .children(segments),
     )
-    .element_ref(&row)
-    .hover(|s| s.bg(style::fill(0.05)))
-    .opacity(move || if dim_m.is_mode_switch_enabled() { 1.0_f32 } else { 0.5_f32 })
-    .on_press(move || {
-        let m = press_m.clone();
-        crate::model::run_root(async move {
-            use nsh_core::element::desktop::{MenuItem, popup_menu, popup_menu_at};
-            let current = m.mode.get_untracked();
-            let enabled = m.is_mode_switch_enabled();
-            let items = crate::model::CoreMode::ALL
-                .iter()
-                .map(|&mode| {
-                    let m = m.clone();
-                    MenuItem::new(m.tr(mode.title_key()))
-                        .checked(current == Some(mode))
-                        .disabled(!enabled)
-                        .on_select(move || {
-                            let m = m.clone();
-                            crate::model::run_root(async move { m.switch_mode(mode).await });
-                        })
-                })
-                .collect();
-            // Beside the row, where a submenu opens.
-            match row.measure().await {
-                Some(r) => {
-                    let at = point(px(r.page.x.0 + r.frame.size.width.0 - 6.0), px(r.page.y.0));
-                    let _ = popup_menu_at(items, at);
-                }
-                None => {
-                    let _ = popup_menu(items);
-                }
-            }
-        });
-    })
 }
 
 fn quick_rows(m: Model, win: WindowRef) -> impl IntoElement {

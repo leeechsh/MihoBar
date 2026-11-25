@@ -820,13 +820,38 @@ impl Model {
             section: self.manager_section.get_untracked(),
         };
         match launch.command(exe).spawn() {
-            Ok(started) => *child = Some(started),
+            Ok(started) => {
+                *child = Some(started);
+                drop(child);
+                self.reap_advanced_process();
+            }
             Err(e) => {
                 *child = None;
                 drop(child);
                 self.log_app("error", format!("Advanced window failed to start: {e}"));
             }
         }
+    }
+
+    /// Collects the advanced window's process once it ends (its window
+    /// closed), checking every 2 s: unwaited, it stays a zombie until the
+    /// window opens again.
+    fn reap_advanced_process(&self) {
+        let m = self.clone();
+        run_root(async move {
+            loop {
+                timer(Duration::from_secs(2)).await;
+                let mut child = m.services.advanced_child.borrow_mut();
+                match child.as_mut().map(|c| c.try_wait()) {
+                    Some(Ok(None)) => {}
+                    // Ended (now reaped), failed to wait, or gone already.
+                    _ => {
+                        child.take();
+                        break;
+                    }
+                }
+            }
+        });
     }
 
     /// Ends the advanced window's process (as the app quits).

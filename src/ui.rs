@@ -213,6 +213,9 @@ fn header(m: Model) -> impl IntoElement {
         .font_weight(FontWeight::BOLD)
         .text_color(style::primary_label());
 
+    // macOS toolbar buttons: monochrome icons that take color only for a
+    // state (the panel pinned, the core stopped) or, quitting, on hover;
+    // evenly spaced.
     let actions = {
         let pin_m = m.clone();
         let restart_m = m.clone();
@@ -222,83 +225,81 @@ fn header(m: Model) -> impl IntoElement {
             let m = m.clone();
             move || m.settings.with(|s| s.pinned)
         };
-        view()
-            .flex_row()
-            .items_center()
-            .gap(px(style::SPACE6))
-            .child(top_icon(
-                {
-                    let pinned = pinned.clone();
-                    move || if pinned() { icons::pin_fill() } else { icons::pin() }
-                },
-                {
-                    let pinned = pinned.clone();
-                    move || if pinned() { style::info() } else { style::tertiary_label() }
-                },
-                {
-                    let m = m.clone();
-                    move || m.tr(if m.settings.with(|s| s.pinned) { "ui.action.unpin" } else { "ui.action.pin" })
-                },
-                || false,
-                move || pin_m.settings.update(|s| s.pinned = !s.pinned),
-            ))
-            .child(top_icon(
-                icons::arrow_clockwise,
-                style::info,
-                {
-                    let m = m.clone();
-                    move || m.tr(if m.is_running() { "app.primary.restart" } else { "app.primary.start" })
-                },
-                {
-                    let m = m.clone();
-                    move || m.is_processing()
-                },
-                move || {
-                    let m = restart_m.clone();
-                    crate::model::run_root(async move { m.primary_core_action().await });
-                },
-            ))
-            .child(top_icon(
-                {
-                    let m = m.clone();
-                    move || if m.is_running() { icons::stop_circle() } else { icons::play_circle() }
-                },
-                {
-                    let m = m.clone();
-                    move || if m.is_running() { style::warning() } else { style::positive() }
-                },
-                {
-                    let m = m.clone();
-                    move || m.tr(if m.is_running() { "ui.action.stop" } else { "app.primary.start" })
-                },
-                {
-                    let m = m.clone();
-                    move || m.is_processing()
-                },
-                move || {
-                    let m = toggle_m.clone();
-                    crate::model::run_root(async move {
-                        if m.status.get_untracked() == RuntimeStatus::Running {
-                            m.stop_core().await;
-                        } else {
-                            m.start_core(StartTrigger::Manual).await;
-                        }
-                    });
-                },
-            ))
-            .child(top_icon(
-                icons::power,
-                style::negative,
-                {
-                    let m = m.clone();
-                    move || m.tr("ui.action.quit")
-                },
-                || false,
-                move || {
-                    let m = quit_m.clone();
-                    crate::model::run_root(async move { m.quit().await });
-                },
-            ))
+        let pin = top_icon(
+            {
+                let pinned = pinned.clone();
+                move || if pinned() { icons::pin_fill() } else { icons::pin() }
+            },
+            {
+                let pinned = pinned.clone();
+                move |_| if pinned() { style::info() } else { style::secondary_label() }
+            },
+            {
+                let m = m.clone();
+                move || m.tr(if m.settings.with(|s| s.pinned) { "ui.action.unpin" } else { "ui.action.pin" })
+            },
+            || false,
+            move || pin_m.settings.update(|s| s.pinned = !s.pinned),
+        );
+        let restart = top_icon(
+            icons::arrow_clockwise,
+            |_| style::secondary_label(),
+            {
+                let m = m.clone();
+                move || m.tr(if m.is_running() { "app.primary.restart" } else { "app.primary.start" })
+            },
+            {
+                let m = m.clone();
+                move || m.is_processing()
+            },
+            move || {
+                let m = restart_m.clone();
+                crate::model::run_root(async move { m.primary_core_action().await });
+            },
+        );
+        let toggle = top_icon(
+            {
+                let m = m.clone();
+                move || if m.is_running() { icons::stop_circle() } else { icons::play_circle() }
+            },
+            {
+                let m = m.clone();
+                move |_| if m.is_running() { style::secondary_label() } else { style::positive() }
+            },
+            {
+                let m = m.clone();
+                move || m.tr(if m.is_running() { "ui.action.stop" } else { "app.primary.start" })
+            },
+            {
+                let m = m.clone();
+                move || m.is_processing()
+            },
+            move || {
+                let m = toggle_m.clone();
+                crate::model::run_root(async move {
+                    if m.status.get_untracked() == RuntimeStatus::Running {
+                        m.stop_core().await;
+                    } else {
+                        m.start_core(StartTrigger::Manual).await;
+                    }
+                });
+            },
+        );
+        let quit = top_icon(
+            icons::power,
+            |hovered| if hovered { style::negative() } else { style::secondary_label() },
+            {
+                let m = m.clone();
+                move || m.tr("ui.action.quit")
+            },
+            || false,
+            move || {
+                let m = quit_m.clone();
+                crate::model::run_root(async move { m.quit().await });
+            },
+        );
+        // Evenly spaced, as a toolbar's buttons.
+        view().flex_row().items_center().gap(px(style::SPACE4)).child(pin).child(restart).child(toggle).child(quit)
     };
 
     view()
@@ -313,27 +314,30 @@ fn header(m: Model) -> impl IntoElement {
         .child(actions)
 }
 
-/// A 26-point icon button (ClashBar's `compactTopIcon`).
+/// A toolbar button: a borderless icon whose rounded-square background
+/// shows on hover; `tone` gets whether the pointer is over it.
 fn top_icon(
     src: impl Fn() -> String + 'static,
-    tone: impl Fn() -> AdaptiveColor + 'static,
+    tone: impl Fn(bool) -> AdaptiveColor + 'static,
     label: impl Fn() -> String + 'static,
     disabled: impl Fn() -> bool + Clone + 'static,
     on_press: impl Fn() + 'static,
 ) -> impl IntoElement {
     let label = std::rc::Rc::new(label);
     let is_disabled = disabled.clone();
+    let hovered = signal(false);
     view()
-        .w(px(28.0))
-        .h(px(28.0))
+        .w(px(26.0))
+        .h(px(26.0))
         .items_center()
         .justify_center()
-        .rounded(px(14.0))
-        .bg(style::control_track())
-        .hover(|s| s.bg(style::fill(0.14)))
+        .rounded(px(style::CONTROL_RADIUS + 1.0))
+        .hover(|s| s.bg(style::fill(0.08)))
         .transition_colors()
         .duration(120.0)
-        .opacity(move || if disabled() { 0.45_f32 } else { 1.0_f32 })
+        .opacity(move || if disabled() { 0.4_f32 } else { 1.0_f32 })
+        .on_mouse_enter(move |_: &MouseEvent| hovered.set(true))
+        .on_mouse_leave(move |_: &MouseEvent| hovered.set(false))
         .tooltip(crate::widgets::tip({
             let label = label.clone();
             move || label()
@@ -344,7 +348,7 @@ fn top_icon(
                 on_press();
             }
         })
-        .child(image(move || ImageSrc::from(src())).w(px(14.0)).h(px(14.0)).tint_color(move || tone()))
+        .child(image(move || ImageSrc::from(src())).w(px(15.0)).h(px(15.0)).tint_color(move || tone(hovered.get())))
 }
 
 // --- Mode switcher and tabs --------------------------------------------------
@@ -353,7 +357,8 @@ fn top_icon(
 /// (The outbound mode is a row of the proxy tab, with a native submenu.)
 fn tabs(m: Model) -> impl IntoElement {
     let tabs = RootTab::ALL.map(|tab| tab_button(m.clone(), tab));
-    // Rules, connections and logs open in the advanced window.
+    // Rules, connections and logs open in the advanced window: a segment
+    // that opens it rather than staying chosen.
     let manage_m = m.clone();
     let manage = tab_face(
         icons::desktop(),
@@ -364,7 +369,18 @@ fn tabs(m: Model) -> impl IntoElement {
         || false,
     )
     .on_press(move || manage_m.open_manager(None));
-    view().pb(px(style::SPACE4)).child(view().flex_row().gap(px(style::SPACE2)).children(tabs).child(manage))
+    // A segmented control (AppKit's `NSSegmentedControl`): the segments on
+    // a rounded track, the chosen one raised.
+    view().pb(px(style::SPACE4)).child(
+        view()
+            .flex_row()
+            .gap(px(2.0))
+            .p(px(3.0))
+            .rounded(px(style::TAB_RADIUS))
+            .bg(style::control_track())
+            .children(tabs)
+            .child(manage),
+    )
 }
 
 fn tab_icon(tab: RootTab) -> String {
@@ -387,31 +403,34 @@ fn tab_button(m: Model, tab: RootTab) -> impl IntoElement {
     .on_press(move || press_m.tab.set(tab))
 }
 
-/// A toolbar item: an icon over its label, tinted while `selected`.
+/// A segment: its icon beside its label, raised and tinted while
+/// `selected`.
 fn tab_face(
     icon: String,
     label: impl Fn() -> String + 'static,
     selected: impl Fn() -> bool + Clone + 'static,
 ) -> nsh_core::element::View {
-    let (s1, s2) = (selected.clone(), selected.clone());
+    let (s1, s2, s3) = (selected.clone(), selected.clone(), selected.clone());
     view()
         .flex_1()
-        .h(px(40.0))
+        .flex_row()
+        .h(px(26.0))
         .items_center()
         .justify_center()
-        .gap(px(3.0))
-        .rounded(px(style::TAB_RADIUS))
-        .bg(move || if s1() { style::accent(0.13) } else { style::accent(0.0) })
-        .hover(|s| s.bg(style::fill(0.05)))
+        .gap(px(5.0))
+        .rounded(px(style::TAB_RADIUS - 3.0))
+        .bg(move || if s1() { style::elevated() } else { style::fill(0.0) })
+        .border_1()
+        .border_color(move || if s3() { style::card_border() } else { style::fill(0.0) })
         .transition_colors()
         .duration(140.0)
-        .child(image(ImageSrc::from(icon)).w(px(15.0)).h(px(15.0)).tint_color(move || {
+        .child(image(ImageSrc::from(icon)).w(px(13.0)).h(px(13.0)).tint_color(move || {
             if s2() { style::info() } else { style::secondary_label() }
         }))
         .child(
             text(label)
-                .text_size(px(font::CAPTION))
-                .font_weight(FontWeight::SEMIBOLD)
+                .text_size(px(font::CALLOUT))
+                .font_weight(FontWeight::MEDIUM)
                 .text_color(move || if selected() { style::info() } else { style::secondary_label() }),
         )
 }
@@ -478,22 +497,94 @@ fn footer(m: Model) -> impl IntoElement {
         )
         .child(core_upgrade_button(m.clone()))
         .child(view().flex_1())
+        .child(app_version_button(m))
+}
+
+/// MihoBar's version, which checks for a newer one when pressed and shows
+/// the outcome in its place; a newer version shows in blue and opens NSH's
+/// update window.
+fn app_version_button(m: Model) -> impl IntoElement {
+    use crate::updates::CheckState;
+    let (text_m, color_m, tip_m, label_m, press_m) = (m.clone(), m.clone(), m.clone(), m.clone(), m.clone());
+    view()
+        .px(px(style::SPACE4))
+        .rounded(px(style::CORNER_RADIUS))
+        .hover(|s| s.bg(style::fill(0.08)))
+        .tooltip(crate::widgets::tip(move || {
+            match tip_m.app_check.get() {
+                CheckState::Available(v) => tip_m.tr_args("ui.footer.app_update.install", &[&v]),
+                _ => tip_m.tr("ui.footer.app_update.check"),
+            }
+        }))
+        .label(move || label_m.tr("ui.footer.app_update.check"))
+        .on_press(move || {
+            let m = press_m.clone();
+            if matches!(m.app_check.get_untracked(), CheckState::Available(_)) {
+                m.install_app_update();
+            } else if m.app_check.get_untracked() != CheckState::Checking {
+                crate::model::run_root(async move { m.check_app_version(true).await });
+            }
+        })
         .child(
-            text(move || m.tr_args("ui.footer.version", &[&crate::updates::app_version()]))
-                .text_size(px(font::CAPTION))
-                .text_color(style::tertiary_label()),
+            text(move || {
+                let m = &text_m;
+                let version = m.tr_args("ui.footer.version", &[&crate::updates::app_version()]);
+                match m.app_check.get() {
+                    CheckState::Checking => m.tr("ui.updates.checking"),
+                    CheckState::UpToDate => format!("{version} · {}", m.tr("ui.updates.up_to_date")),
+                    CheckState::Failed => m.tr("ui.updates.failed"),
+                    CheckState::Available(v) => m.tr_args("ui.footer.app_update.available", &[&v]),
+                    _ => version,
+                }
+            })
+            .text_size(px(font::CAPTION))
+            .font_weight(FontWeight::MEDIUM)
+            .text_color(move || match color_m.app_check.get() {
+                CheckState::Available(_) => style::info(),
+                CheckState::Failed => style::negative(),
+                _ => style::tertiary_label(),
+            }),
         )
 }
 
-/// The footer's core upgrade (ClashBar's footer `core_upgrade` control).
+/// The footer's core control: checks for a newer core, and once one is
+/// found upgrades to it (mihomo's `/upgrade`, the core running); the check
+/// or the upgrade shows beside it.
 fn core_upgrade_button(m: Model) -> impl IntoElement {
     use crate::settings_core::TaskState;
-    let state = {
+    use crate::updates::CheckState;
+    /// What the control shows: the upgrade's state over the check's.
+    #[derive(Clone, PartialEq)]
+    enum Shown {
+        Idle,
+        Checking,
+        UpToDate,
+        Latest(String),
+        Available(String),
+        Upgrading,
+        Upgraded,
+        Failed,
+    }
+    let shown = {
         let m = m.clone();
-        move || m.core_upgrade.get()
+        move || match m.core_upgrade.get() {
+            TaskState::Running => Shown::Upgrading,
+            TaskState::Succeeded => Shown::Upgraded,
+            TaskState::AlreadyLatest(_) => Shown::UpToDate,
+            TaskState::Failed(_) => Shown::Failed,
+            TaskState::Idle => match m.core_check.get() {
+                CheckState::Checking => Shown::Checking,
+                CheckState::UpToDate => Shown::UpToDate,
+                CheckState::Failed => Shown::Failed,
+                CheckState::Latest(v) => Shown::Latest(v),
+                _ if m.core_update_available() => Shown::Available(m.core_latest.get().unwrap_or_default()),
+                _ => Shown::Idle,
+            },
+        }
     };
-    let (s1, s2, s3) = (state.clone(), state.clone(), state.clone());
-    let (help_m, label_m, press_m) = (m.clone(), m.clone(), m.clone());
+    let (s1, s2, s3, s4, s5) = (shown.clone(), shown.clone(), shown.clone(), shown.clone(), shown.clone());
+    let (tip_m, label_m, text_m, press_m) = (m.clone(), m.clone(), m.clone(), m.clone());
+    let version = |v: &str| format!("v{}", v.trim_start_matches('v'));
     view()
         .flex_row()
         .items_center()
@@ -502,58 +593,61 @@ fn core_upgrade_button(m: Model) -> impl IntoElement {
         .px(px(style::SPACE4))
         .rounded(px(style::CORNER_RADIUS))
         .hover(|s| s.bg(style::fill(0.08)))
-        .opacity({
-            let m = m.clone();
-            move || if m.is_live() { 1.0_f32 } else { 0.5_f32 }
-        })
-        .tooltip(crate::widgets::tip(move || {
-            let m = &help_m;
-            if !m.is_live() {
-                return m.tr("ui.footer.core_upgrade.help.disabled");
-            }
-            match s1() {
-                TaskState::Running => m.tr("ui.footer.core_upgrade.help.running"),
-                TaskState::Succeeded => m.tr("ui.footer.core_upgrade.help.success"),
-                TaskState::AlreadyLatest(Some(v)) => m.tr_args("ui.footer.core_upgrade.help.latest_version", &[&v]),
-                TaskState::AlreadyLatest(None) => m.tr("ui.footer.core_upgrade.help.latest"),
-                TaskState::Failed(e) => m.tr_args("ui.footer.core_upgrade.help.failed", &[&e]),
-                TaskState::Idle => m.tr("ui.footer.core_upgrade.help"),
-            }
+        .tooltip(crate::widgets::tip(move || match s1() {
+            Shown::Available(v) if tip_m.is_live() => tip_m.tr_args("ui.footer.core_update.install", &[&version(&v)]),
+            Shown::Available(_) => tip_m.tr("ui.footer.core_upgrade.help.disabled"),
+            _ => tip_m.tr("ui.footer.core_update.check"),
         }))
-        .label({
-            let m = m.clone();
-            move || m.tr("ui.action.upgrade_core")
-        })
+        .label(move || label_m.tr("ui.footer.core_update.check"))
         .on_press(move || {
-            if press_m.is_live_untracked() {
-                let m = press_m.clone();
-                crate::model::run_root(async move { m.upgrade_core().await });
+            let m = press_m.clone();
+            match s2() {
+                Shown::Checking | Shown::Upgrading => {}
+                Shown::Available(_) => {
+                    if m.is_live_untracked() {
+                        crate::model::run_root(async move { m.upgrade_core().await });
+                    }
+                }
+                _ => crate::model::run_root(async move { m.check_core_update(false).await }),
             }
         })
         .child(
-            image(move || ImageSrc::from(match s2() {
-                TaskState::Running => icons::timer(),
-                TaskState::Succeeded | TaskState::AlreadyLatest(_) => icons::checkmark_circle_fill(),
-                TaskState::Failed(_) => icons::warning_triangle(),
-                TaskState::Idle => icons::arrow_down_circle_line(),
-            }))
+            image(move || {
+                ImageSrc::from(match s3() {
+                    Shown::Checking | Shown::Upgrading => icons::timer(),
+                    Shown::UpToDate | Shown::Upgraded => icons::checkmark_circle_fill(),
+                    Shown::Failed => icons::warning_triangle(),
+                    Shown::Available(_) => icons::arrow_down_circle_line(),
+                    _ => icons::arrows_circlepath(),
+                })
+            })
             .w(px(10.0))
             .h(px(10.0))
-            .tint_color(move || match s3() {
-                TaskState::Succeeded | TaskState::AlreadyLatest(_) => style::positive(),
-                TaskState::Failed(_) => style::negative(),
+            .tint_color(move || match s4() {
+                Shown::UpToDate | Shown::Upgraded => style::positive(),
+                Shown::Failed => style::negative(),
+                Shown::Available(_) => style::info(),
                 _ => style::secondary_label(),
             }),
         )
         .child(
-            text(move || match state() {
-                TaskState::Running => label_m.tr("ui.footer.core_upgrade.running"),
-                TaskState::Succeeded => label_m.tr("ui.footer.core_upgrade.success"),
-                TaskState::AlreadyLatest(_) => label_m.tr("ui.footer.core_upgrade.latest"),
-                TaskState::Failed(_) => label_m.tr("ui.footer.core_upgrade.failed"),
-                TaskState::Idle => String::new(),
+            text(move || {
+                let m = &text_m;
+                match s5() {
+                    Shown::Checking => m.tr("ui.updates.checking"),
+                    Shown::UpToDate => m.tr("ui.updates.up_to_date"),
+                    Shown::Failed => m.tr("ui.updates.failed"),
+                    Shown::Latest(v) => m.tr_args("ui.updates.latest", &[&version(&v)]),
+                    Shown::Available(v) => format!("→ {}", version(&v)),
+                    Shown::Upgrading => m.tr("ui.footer.core_upgrade.running"),
+                    Shown::Upgraded => m.tr("ui.footer.core_upgrade.success"),
+                    Shown::Idle => String::new(),
+                }
             })
             .text_size(px(font::CAPTION))
-            .text_color(style::secondary_label()),
+            .text_color({
+                let m = m.clone();
+                move || if m.core_update_available() { style::info() } else { style::secondary_label() }
+            }),
         )
 }

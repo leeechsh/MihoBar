@@ -4,7 +4,7 @@
 
 use nsh_core::prelude::*;
 
-pub const PANEL_WIDTH: f32 = 360.0;
+pub const PANEL_WIDTH: f32 = 340.0;
 pub const SPACE2: f32 = 2.0;
 pub const SPACE4: f32 = 4.0;
 pub const SPACE6: f32 = 6.0;

@@ -97,7 +97,9 @@ impl Model {
                     m.check_app_version(false).await;
                     run_root(prompt_for_update(UpdatePromptOptions::default().quiet(true).locale(m.update_locale())));
                 }
-                m.check_core_update(true).await;
+                if m.settings.with_untracked(|s| s.core_updates()) != crate::settings::CoreUpdateMode::Manual {
+                    m.check_core_update(true).await;
+                }
                 timer(CHECK_EVERY).await;
             }
         });
@@ -205,7 +207,7 @@ impl Model {
         self.log_app("info", self.tr_args("log.core_update.available", &[&latest, &current]));
         self.core_check.set(CheckState::Idle);
         let can = self.is_live_untracked() && !self.tun_enabled();
-        if auto && can && self.settings.with_untracked(|s| s.auto_update_core) {
+        if auto && can && self.settings.with_untracked(|s| s.core_updates()) == crate::settings::CoreUpdateMode::Auto {
             self.upgrade_core().await;
         }
     }

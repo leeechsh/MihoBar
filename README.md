@@ -106,9 +106,9 @@ python3 -m http.server 8765 --bind 127.0.0.1 --directory path/to/dir-with-sub.ya
 
 ## Layout
 
-The menu bar panel holds the node tab (traffic, outbound mode, configs,
-system proxy, TUN, proxy groups) and every setting. The 高级 button opens
-the advanced window, after [zashboard](https://github.com/leeechsh/zashboard)
+The menu bar panel holds the node tab (traffic, proxy mode, profile,
+system proxy, TUN, proxy groups) and every setting. The Dashboard (仪表盘)
+segment opens the dashboard window, after [zashboard](https://github.com/leeechsh/zashboard)
 (leeechsh's fork): connections (table with chosen columns, sorting,
 grouping, regex search and hiding, details, pause, close all), usage
 (devices, inbound users, hosts, outbounds and processes over a range, with a

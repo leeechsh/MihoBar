@@ -14,6 +14,16 @@ pub enum StatusBarDisplayMode {
     SpeedOnly,
 }
 
+/// How the core updates: not at all on its own, a daily check that shows a
+/// newer version (the footer), or that installs it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CoreUpdateMode {
+    Manual,
+    Check,
+    Auto,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum AppLanguage {
     /// The system's: Chinese when the user prefers Chinese before English,
@@ -164,8 +174,18 @@ pub struct Settings {
     pub ssid_rules: Vec<SsidRule>,
     /// Checks for a newer MihoBar at launch and daily (NSH's update prompt).
     pub auto_check_updates: bool,
-    /// Installs a newer core by itself (not with TUN on).
+    /// Installs a newer core by itself (not with TUN on). Read only when
+    /// `core_update_mode` is unset: off meant checking without installing.
     pub auto_update_core: bool,
+    /// How the core updates (`core_updates`).
+    pub core_update_mode: Option<CoreUpdateMode>,
+}
+
+impl Settings {
+    /// How the core updates: the chosen mode, else the earlier switch's.
+    pub fn core_updates(&self) -> CoreUpdateMode {
+        self.core_update_mode.unwrap_or(if self.auto_update_core { CoreUpdateMode::Auto } else { CoreUpdateMode::Check })
+    }
 }
 
 impl Default for Settings {
@@ -194,6 +214,7 @@ impl Default for Settings {
             ssid_rules: Vec::new(),
             auto_check_updates: true,
             auto_update_core: true,
+            core_update_mode: None,
         }
     }
 }
