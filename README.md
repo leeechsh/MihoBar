@@ -8,6 +8,35 @@ Mihobar is a port of **[ClashBar](https://github.com/Sitoi/ClashBar)** by Sitoi
 strings and default config. Like ClashBar, it is licensed under the
 **GNU General Public License v3.0** (see `LICENSE`).
 
+## Install
+
+Download `Mihobar-<version>-arm64.dmg` (Apple silicon) or
+`Mihobar-<version>-x86_64.dmg` (Intel) from
+[Releases](../../releases/latest), open it and drag Mihobar to Applications
+(run it from there: the helper installs only from `/Applications`). Mihobar
+is not signed with an Apple Developer ID yet, so macOS blocks its first
+launch: open it once from System Settings → Privacy & Security → Open
+Anyway, or clear the quarantine flag:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/Mihobar.app
+```
+
+## Release
+
+`.github/workflows/release.yml` builds on GitHub's macOS runners, Apple
+silicon (`macos-15`) and Intel (`macos-15-intel`), with NSH 0.7.0 and
+the mihomo core for each (the repository variable `MIHOMO_VERSION` pins
+one; the latest otherwise), and uploads a `.dmg`, a `.zip` and their
+SHA-256 sums for each:
+
+```bash
+git tag v0.2.0 && git push origin v0.2.0   # release 0.2.0 (the tag's version goes into the bundle)
+```
+
+Running the workflow by hand (Actions → Release → Run workflow) replaces
+the `alpha` pre-release with a build of the chosen branch.
+
 ## Build
 
 ```bash

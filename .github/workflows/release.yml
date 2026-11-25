@@ -1,0 +1,127 @@
+# Builds Mihobar for Apple silicon and Intel and publishes them:
+#   a tag v*        -> the release of that version (the latest)
+#   run by hand     -> the rolling "alpha" pre-release, from the branch run
+# Each build is signed ad hoc (no Developer ID yet): see README's Install.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  # The NSH CLI the app is built with (its crates are pinned in Cargo.toml).
+  NSH_VERSION: v0.7.0
+  # A mihomo release to ship (repository variable); empty: the latest.
+  MIHOMO_VERSION: ${{ vars.MIHOMO_VERSION }}
+
+jobs:
+  build:
+    name: Build (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: macos-15
+          - arch: x86_64
+            runner: macos-15-intel
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Version
+        id: version
+        run: |
+          if [[ "$GITHUB_REF_TYPE" == tag ]]; then
+            version="${GITHUB_REF_NAME#v}"
+          else
+            version="$(jq -r .version nsh.json)"
+          fi
+          # The bundle's version and build number (CFBundleVersion).
+          jq --arg v "$version" --argjson b "$GITHUB_RUN_NUMBER" '.version = $v | .build = $b' nsh.json > nsh.json.new
+          mv nsh.json.new nsh.json
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.arch }}
+          workspaces: |
+            . -> target
+            helper -> target
+
+      - name: Install NSH
+        run: |
+          curl -fsSL https://nsh.dev/install.sh | NSH_VERSION="$NSH_VERSION" sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          "$HOME/.local/bin/nsh" --version
+
+      - name: Fetch mihomo
+        run: TARGET_ARCH=${{ matrix.arch }} scripts/fetch-mihomo.sh
+
+      - name: Unit tests
+        run: cargo test --lib
+
+      - name: Package
+        run: scripts/package.sh
+
+      - name: Check architecture
+        run: |
+          lipo -archs .nsh/out/Mihobar.app/Contents/MacOS/Mihobar | grep -qw ${{ matrix.arch }}
+          lipo -archs .nsh/out/Mihobar.app/Contents/Library/HelperTools/dev.mihobar.helper | grep -qw ${{ matrix.arch }}
+
+      - name: Zip and disk image
+        run: |
+          name="Mihobar-${{ steps.version.outputs.version }}-${{ matrix.arch }}"
+          mkdir -p dist dmg
+          ditto -c -k --sequesterRsrc --keepParent .nsh/out/Mihobar.app "dist/$name.zip"
+          ditto .nsh/out/Mihobar.app dmg/Mihobar.app
+          ln -s /Applications dmg/Applications
+          hdiutil create -volname Mihobar -srcfolder dmg -ov -format UDZO "dist/$name.dmg"
+          (cd dist && shasum -a 256 *.zip *.dmg > "$name.sha256")
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mihobar-${{ matrix.arch }}
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    name: Publish
+    needs: build
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Release
+        if: github.ref_type == 'tag'
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --title "Mihobar ${GITHUB_REF_NAME#v}" \
+            --generate-notes \
+            --latest
+
+      - name: Alpha pre-release
+        if: github.ref_type != 'tag'
+        run: |
+          gh release delete alpha --yes --cleanup-tag || true
+          gh release create alpha dist/* \
+            --target "$GITHUB_SHA" \
+            --title "Mihobar Alpha" \
+            --notes "Built from ${GITHUB_REF_NAME} at ${GITHUB_SHA::7} (run ${GITHUB_RUN_NUMBER})." \
+            --prerelease
