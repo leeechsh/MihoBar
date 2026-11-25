@@ -42,7 +42,7 @@ jobs:
             runner: macos-15-intel
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Version
         id: version
@@ -98,7 +98,7 @@ jobs:
           hdiutil create -volname MihoBar -srcfolder dmg -ov -format UDZO "dist/$name.dmg"
           (cd dist && shasum -a 256 *.zip *.dmg > "$name.sha256")
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: mihobar-${{ matrix.arch }}
           path: dist/*
@@ -112,12 +112,12 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # The history since the last tag, for the release notes.
           fetch-depth: 0
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: dist
           merge-multiple: true
