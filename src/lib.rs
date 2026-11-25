@@ -1,5 +1,6 @@
-//! MihoBar: a native macOS menu bar client for mihomo, on NSH.
-//! A port of ClashBar (https://github.com/Sitoi/ClashBar), GPL-3.0.
+//! MihoBar: a lightweight native macOS menu bar client for mihomo, on NSH.
+//! It draws on the ideas and design of ClashBar
+//! (https://github.com/Sitoi/ClashBar, GPL-3.0); see README.md.
 
 pub mod api;
 pub mod config;

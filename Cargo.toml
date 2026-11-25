@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 license = "GPL-3.0-only"
 publish = false
-description = "A native macOS menu bar client for mihomo, written in Rust on NSH. A port of ClashBar (github.com/Sitoi/ClashBar)."
+description = "A lightweight native macOS menu bar client for mihomo, written in Rust on NSH."
 
 [workspace]
 

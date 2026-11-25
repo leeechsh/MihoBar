@@ -1,5 +1,5 @@
-//! MihoBar's privileged helper (a port of ClashBar's `ProxyHelper`): a
-//! launchd daemon, run as root, that sets the macOS system proxy for the
+//! MihoBar's privileged helper (after the design of ClashBar's
+//! `ProxyHelper`): a launchd daemon, run as root, that sets the macOS system proxy for the
 //! app over XPC. Only `dev.mihobar.app` may connect.
 
 mod protocol;
