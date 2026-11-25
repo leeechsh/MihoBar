@@ -656,12 +656,12 @@ impl Model {
     }
 
     pub fn copy_connection_host(&self, host: &str) {
-        nsh_core::prelude::set_clipboard(host.to_owned());
+        let _ = nsh_core::prelude::set_clipboard(host.to_owned());
         self.log_app("info", self.tr_args("log.connection.copy_host", &[&host]));
     }
 
     pub fn copy_connection_id(&self, id: &str) {
-        nsh_core::prelude::set_clipboard(id.to_owned());
+        let _ = nsh_core::prelude::set_clipboard(id.to_owned());
         self.log_app("info", self.tr_args("log.connection.copy_id", &[&id]));
     }
 

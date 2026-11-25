@@ -12,8 +12,8 @@ description = "A native macOS menu bar client for mihomo, written in Rust on NSH
 name = "mihobar"
 
 [dependencies]
-nsh-core = "0.6.1"
-nsh-base = "0.6.1"
+nsh-core = "0.7.0"
+nsh-base = "0.7.0"
 env_logger = "0.11"
 log = "0.4"
 serde = { version = "1", features = ["derive"] }
@@ -24,20 +24,20 @@ futures-util = { version = "0.3", default-features = false, features = ["std"] }
 tokio = { version = "1", features = ["sync", "time", "rt"] }
 tokio-tungstenite = { version = "0.28", default-features = false, features = ["connect", "handshake"] }
 regex = "1"
+nsh-extra = { version = "0.7.0", default-features = false, features = ["location"] }
 
 # macOS only. Only SVG is on (the menu bar item is drawn as an SVG template);
 # the template's other features (shaders, editors, plots...) are left out.
 [target.'cfg(target_os = "macos")'.dependencies]
-nsh-platform-macos = { version = "0.6.1", default-features = false, features = ["svg"] }
+nsh-platform-macos = { version = "0.7.0", default-features = false, features = ["svg"] }
 # The menu bar item drawn by hand for the speed styles (ClashBar's
 # `StatusItemContentView`): AppKit, at the versions NSH links.
 objc2 = "0.6"
 block2 = "0.6"
 objc2-foundation = { version = "0.3", features = ["NSString", "NSData", "NSGeometry", "NSAttributedString", "NSDictionary"] }
-# Wi-Fi auto-switch (ClashBar's SSID strategy): the Wi-Fi name, the
-# location permission it needs.
+# Wi-Fi auto-switch (ClashBar's SSID strategy): the Wi-Fi name (the
+# location permission it needs is nsh-extra's).
 objc2-core-wlan = { version = "0.3", default-features = false, features = ["std", "CWWiFiClient", "CWInterface"] }
-objc2-core-location = { version = "0.3", default-features = false, features = ["std", "CLLocationManager"] }
 objc2-app-kit = { version = "0.3", features = ["NSStatusBar", "NSStatusItem", "NSStatusBarButton", "NSButton", "NSControl", "NSView", "NSResponder", "NSImage", "NSWindow", "NSScreen", "NSFont", "NSColor", "NSParagraphStyle", "NSText", "NSStringDrawing", "NSAttributedString", "NSEvent", "NSGraphics", "NSCell", "NSButtonCell", "NSActionCell", "std", "NSRunningApplication", "libc"], default-features = false }
 
 [profile.release]

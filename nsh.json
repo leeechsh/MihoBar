@@ -27,5 +27,9 @@
   },
   "macos": {
     "activationPolicy": "accessory"
+  },
+  "dataDir": "${homeDir}/Library/Application Support/mihobar",
+  "application": {
+    "quitMode": "explicit"
   }
 }

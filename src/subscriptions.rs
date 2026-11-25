@@ -320,7 +320,7 @@ impl Model {
 
     pub fn copy_subscription_url(&self, file: &str) {
         if let Some(sub) = self.subscription(file) {
-            set_clipboard(sub.url);
+            let _ = set_clipboard(sub.url);
         }
     }
 

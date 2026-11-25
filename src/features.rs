@@ -474,25 +474,33 @@ impl Model {
     /// Watches the network: the core stops while it is offline and starts
     /// again when it is back (ClashBar's `AppViewModel+NetworkMonitoring`).
     pub(crate) fn start_network_monitoring(&self) {
-        #[cfg(target_os = "macos")]
-        {
-            let mut updates = crate::netmon::watch();
-            let m = self.clone();
-            crate::model::run_root(async move {
-                while let Some(online) = updates.recv().await {
-                    let previous = m.network_online.get_untracked();
-                    m.network_online.set(Some(online));
-                    if previous == Some(online) {
-                        continue;
-                    }
+        // The system's route (NSH's `network()`: on macOS the path monitor,
+        // ClashBar's `NetworkReachabilityMonitor`); reading it subscribes, so
+        // this runs again as the route changes. Unknown (not answered yet,
+        // or a platform NSH does not watch) changes nothing.
+        let m = self.clone();
+        effect(move || {
+            let kind = network().kind;
+            if kind == nsh_core::platform::NetworkKind::Unknown {
+                return;
+            }
+            let online = kind != nsh_core::platform::NetworkKind::None;
+            untracked(|| {
+                let previous = m.network_online.get_untracked();
+                m.network_online.set(Some(online));
+                if previous == Some(online) {
+                    return;
+                }
+                let m = m.clone();
+                crate::model::run_root(async move {
                     if online {
                         m.auto_start_for_network_recovery().await;
                     } else {
                         m.auto_stop_for_network_loss().await;
                     }
-                }
+                });
             });
-        }
+        });
     }
 
     async fn auto_stop_for_network_loss(&self) {
@@ -571,9 +579,16 @@ impl Model {
 
     /// Reads the permission and the Wi-Fi; a new Wi-Fi applies its rule.
     pub async fn refresh_ssid(&self) {
-        #[cfg(target_os = "macos")]
         {
-            let Ok((auth, ssid)) = run_on_main_thread(crate::wifi::snapshot).await else { return };
+            let auth: crate::wifi_types::Authorization = nsh_extra::location::authorization().await.into();
+            #[cfg(target_os = "macos")]
+            let ssid = if auth == crate::wifi_types::Authorization::Authorized {
+                run_on_main_thread(crate::wifi::current_ssid).await.ok().flatten()
+            } else {
+                None
+            };
+            #[cfg(not(target_os = "macos"))]
+            let ssid: Option<String> = None;
             if self.ssid_authorization.get_untracked() != auth {
                 self.ssid_authorization.set(auth);
             }
@@ -589,8 +604,7 @@ impl Model {
     pub async fn set_ssid_strategy_enabled(&self, enabled: bool) {
         self.settings.update(|s| s.ssid_strategy_enabled = enabled);
         if enabled {
-            #[cfg(target_os = "macos")]
-            let _ = run_on_main_thread(crate::wifi::request_authorization).await;
+            let _ = nsh_extra::location::request_authorization().await;
             self.refresh_ssid().await;
             if self.ssid_authorization.get_untracked() != crate::wifi_types::Authorization::Authorized {
                 self.log_app("warning", self.tr_args("log.ssid_strategy.authorization_required", &[]));
@@ -600,8 +614,7 @@ impl Model {
     }
 
     pub async fn request_ssid_permission(&self) {
-        #[cfg(target_os = "macos")]
-        let _ = run_on_main_thread(crate::wifi::request_authorization).await;
+        let _ = nsh_extra::location::request_authorization().await;
         self.refresh_ssid().await;
     }
 

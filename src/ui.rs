@@ -46,6 +46,16 @@ fn fit_window_to_content(m: Model, win: nsh_core::element::desktop::WindowRef, c
     use std::sync::atomic::{AtomicU64, Ordering};
     static GENERATION: AtomicU64 = AtomicU64::new(0);
     let generation = GENERATION.fetch_add(1, Ordering::Relaxed) + 1;
+    // A new panel window (one each time it opens) starts at its default
+    // size: the height set for the last one is not this one's. It opens at
+    // that height, though, so it does not jump to the default first.
+    if let Some(h) = LAST_HEIGHT.with(|h| h.take()) {
+        win.set_bounds(nsh_core::desktop::WindowFrame {
+            width: Some(Points(style::PANEL_WIDTH)),
+            height: Some(Points(h)),
+            ..Default::default()
+        });
+    }
     {
         let (m, win, column) = (m.clone(), win.clone(), column.clone());
         effect(move || {

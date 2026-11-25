@@ -366,6 +366,8 @@ pub struct AdvancedSettings {
     pub log_retention: usize,
     pub log_hide_regex: String,
     pub log_hide_enabled: bool,
+    /// The logs shown: "core", "app" or both ("").
+    pub log_source: String,
     /// Rules: the group's selected node and its latency in the chain, and
     /// closing a rule's connections as it is disabled.
     pub rule_show_now: bool,
@@ -387,6 +389,7 @@ impl Default for AdvancedSettings {
             log_retention: 1000,
             log_hide_regex: String::new(),
             log_hide_enabled: false,
+            log_source: String::new(),
             rule_show_now: true,
             rule_show_latency: true,
             rule_disconnect_on_disable: false,
@@ -499,10 +502,33 @@ pub fn grouped(rows: Vec<Conn>, column: Column, expanded: &std::collections::Has
     out
 }
 
-/// A core log line as the logs page lists it (zashboard's `LogWithSeq`).
+/// Where a log line came from: the core (its stream, or `mihomo.log`) or
+/// Mihobar itself (`mihobar.log`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ZLogSource {
+    #[default]
+    Core,
+    App,
+}
+
+impl ZLogSource {
+    /// Its key in the page's source filter.
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::Core => "core",
+            Self::App => "app",
+        }
+    }
+}
+
+/// A log line as the logs page lists it (zashboard's `LogWithSeq`), the
+/// core's or Mihobar's.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ZLog {
     pub seq: u64,
+    pub source: ZLogSource,
+    /// When, in Unix seconds (merging the two files' histories).
+    pub at: i64,
     pub level: String,
     /// `HH:mm:ss`.
     pub time: String,
@@ -510,18 +536,43 @@ pub struct ZLog {
 }
 
 impl ZLog {
-    /// Its type: the payload's first word (`[TCP]`, `[DNS]`...).
+    pub fn new(seq: u64, source: ZLogSource, at: i64, level: impl Into<String>, payload: impl Into<String>) -> Self {
+        let p = crate::format::local_parts(at);
+        Self { seq, source, at, level: level.into(), time: format!("{:02}:{:02}:{:02}", p.3, p.4, p.5), payload: payload.into() }
+    }
+
+    /// Its type: the payload's bracketed first word (`[TCP]`, `[DNS]`...);
+    /// none for Mihobar's own lines.
     pub fn kind(&self) -> &str {
-        self.payload.split(' ').next().unwrap_or("")
+        let first = self.payload.split(' ').next().unwrap_or("");
+        if first.starts_with('[') && first.ends_with(']') { first } else { "" }
     }
 }
 
-/// The logs the page lists: by level or type, without those the hiding
-/// regex matches, and those the search matches.
-pub fn filter_logs(logs: &[ZLog], type_filter: &str, search: &str, hide: Option<&str>) -> Vec<ZLog> {
+/// A level's rank (`warn` is `warning`); unknown levels rank as info.
+fn level_rank(level: &str) -> usize {
+    match level {
+        "trace" | "debug" => 0,
+        "warning" | "warn" => 2,
+        "error" | "fatal" | "panic" => 3,
+        _ => 1,
+    }
+}
+
+/// Whether a line at `level` shows at the page's level (as the core's
+/// stream filters its own; `silent` shows none).
+pub fn level_shown(level: &str, page_level: &str) -> bool {
+    page_level != "silent" && level_rank(level) >= level_rank(page_level)
+}
+
+/// The logs the page lists: from `source` (empty: both), by level or
+/// type, without those the hiding regex matches, and those the search
+/// matches.
+pub fn filter_logs(logs: &[ZLog], source: &str, type_filter: &str, search: &str, hide: Option<&str>) -> Vec<ZLog> {
     let search = search_regex(search);
     let hide = hide.and_then(search_regex);
     logs.iter()
+        .filter(|l| source.is_empty() || l.source.key() == source)
         .filter(|l| type_filter.is_empty() || l.level == type_filter || l.kind() == type_filter)
         .filter(|l| {
             let texts = [l.level.as_str(), l.time.as_str(), l.payload.as_str()];
@@ -529,6 +580,92 @@ pub fn filter_logs(logs: &[ZLog], type_filter: &str, search: &str, hide: Option<
         })
         .cloned()
         .collect()
+}
+
+/// A line of `mihomo.log`: the core's stdout as Mihobar wrote it
+/// (`[date time] [INFO] time="…" level=warning msg="[TCP] …"`), read as
+/// the stream gives it: the core's own level and message.
+pub fn parse_core_file_line(line: &str) -> Option<(i64, String, String)> {
+    let (at, level, message) = crate::data::parse_log_line(line)?;
+    let at = at.duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64);
+    let field = |name: &str| -> Option<String> {
+        let start = message.find(&format!("{name}="))? + name.len() + 1;
+        let rest = &message[start..];
+        if let Some(quoted) = rest.strip_prefix('"') {
+            let mut out = String::new();
+            let mut chars = quoted.chars();
+            while let Some(c) = chars.next() {
+                match c {
+                    '\\' => out.extend(chars.next()),
+                    '"' => return Some(out),
+                    c => out.push(c),
+                }
+            }
+            Some(out)
+        } else {
+            Some(rest.split(' ').next().unwrap_or("").to_owned())
+        }
+    };
+    match (field("level"), field("msg")) {
+        (Some(level), Some(msg)) if !msg.is_empty() => {
+            let level = if level == "warn" { "warning".to_owned() } else { level };
+            Some((at, level, msg))
+        }
+        _ => Some((at, level, message)),
+    }
+}
+
+/// A line of `mihobar.log` (`[date time] [LEVEL] message`).
+pub fn parse_app_file_line(line: &str) -> Option<(i64, String, String)> {
+    let (at, level, message) = crate::data::parse_log_line(line)?;
+    Some((at.duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64), level, message))
+}
+
+/// The last whole lines of `path`, reading at most its last 512 KB, and
+/// its length then (where following it starts).
+pub fn read_tail(path: &std::path::Path, max_lines: usize) -> (Vec<String>, u64) {
+    use std::io::{Read, Seek, SeekFrom};
+    const MAX_BYTES: u64 = 512 * 1024;
+    let Ok(mut file) = std::fs::File::open(path) else { return (Vec::new(), 0) };
+    let len = file.metadata().map_or(0, |m| m.len());
+    let start = len.saturating_sub(MAX_BYTES);
+    let mut bytes = Vec::new();
+    if file.seek(SeekFrom::Start(start)).is_err() || file.take(len - start).read_to_end(&mut bytes).is_err() {
+        return (Vec::new(), len);
+    }
+    let text = String::from_utf8_lossy(&bytes);
+    let mut lines: Vec<&str> = text.lines().collect();
+    if start > 0 && !lines.is_empty() {
+        lines.remove(0); // Cut mid-line.
+    }
+    let skip = lines.len().saturating_sub(max_lines);
+    (lines[skip..].iter().map(|l| (*l).to_owned()).collect(), len)
+}
+
+/// Both files' last lines at the page's level, newest first, numbered
+/// oldest first from 1, at most `keep`; and the length of `mihobar.log`
+/// (following it starts there).
+pub fn history(logs_dir: &std::path::Path, page_level: &str, keep: usize) -> (Vec<ZLog>, u64) {
+    let (core, _) = read_tail(&logs_dir.join("mihomo.log"), keep);
+    let (app, app_len) = read_tail(&logs_dir.join("mihobar.log"), keep);
+    let mut all: Vec<(i64, ZLogSource, String, String)> = core
+        .iter()
+        .filter_map(|l| parse_core_file_line(l))
+        .map(|(at, level, msg)| (at, ZLogSource::Core, level, msg))
+        .chain(app.iter().filter_map(|l| parse_app_file_line(l)).map(|(at, level, msg)| (at, ZLogSource::App, level, msg)))
+        .filter(|(_, _, level, _)| level_shown(level, page_level))
+        .collect();
+    // Oldest first (stable: each file's own order within a second).
+    all.sort_by_key(|(at, ..)| *at);
+    let skip = all.len().saturating_sub(keep);
+    let logs = all
+        .into_iter()
+        .skip(skip)
+        .enumerate()
+        .map(|(i, (at, source, level, msg))| ZLog::new(i as u64 + 1, source, at, level, msg))
+        .rev()
+        .collect();
+    (logs, app_len)
 }
 
 #[cfg(test)]
@@ -583,5 +720,35 @@ mod tests {
         assert!(render(&items, &View { hide: Some("direct"), ..base }).is_empty());
         let rows = grouped(render(&items, &base), Column::Rule, &Default::default(), 0, false);
         assert_eq!(rows, vec![Row::Group { value: "RuleSet: cn".into(), count: 3, expanded: false }]);
+    }
+
+    #[test]
+    fn reads_both_log_files() {
+        let core = r#"[2026-11-25 19:08:11] [INFO] time="2026-11-25T19:08:11.17+08:00" level=warning msg="[TCP] dial \"x\" error""#;
+        let (_, level, msg) = parse_core_file_line(core).unwrap();
+        assert_eq!((level.as_str(), msg.as_str()), ("warning", r#"[TCP] dial "x" error"#));
+        let plain = "[2026-11-25 19:08:11] [INFO] Start initial configuration";
+        assert_eq!(parse_core_file_line(plain).unwrap().2, "Start initial configuration");
+        let (_, level, msg) = parse_app_file_line("[2026-11-25 19:04:06] [INFO] System proxy enabled").unwrap();
+        assert_eq!((level.as_str(), msg.as_str()), ("info", "System proxy enabled"));
+
+        let dir = std::env::temp_dir().join(format!("mihobar-logs-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("mihomo.log"),
+            "[2026-11-25 10:00:01] [INFO] time=\"t\" level=info msg=\"[TCP] a\"\n[2026-11-25 10:00:03] [INFO] time=\"t\" level=debug msg=\"[DNS] b\"\n",
+        )
+        .unwrap();
+        std::fs::write(dir.join("mihobar.log"), "[2026-11-25 10:00:02] [INFO] started\n").unwrap();
+        let (logs, len) = history(&dir, "info", 10);
+        assert_eq!(len, "[2026-11-25 10:00:02] [INFO] started\n".len() as u64);
+        // Newest first, numbered oldest first; the debug line is below info.
+        let got: Vec<_> = logs.iter().map(|l| (l.seq, l.source, l.payload.as_str())).collect();
+        assert_eq!(got, vec![(2, ZLogSource::App, "started"), (1, ZLogSource::Core, "[TCP] a")]);
+        let only_app = filter_logs(&logs, "app", "", "", None);
+        assert_eq!(only_app.len(), 1);
+        assert_eq!(logs[0].kind(), "");
+        assert_eq!(logs[1].kind(), "[TCP]");
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

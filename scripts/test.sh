@@ -6,7 +6,9 @@
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 for port in 9097 7897; do
-  if lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
+  # A connection, not lsof: a core the helper runs as root is invisible
+  # to an unprivileged lsof.
+  if nc -z -G 1 127.0.0.1 "$port" >/dev/null 2>&1; then
     echo "port $port is in use (a running Mihobar?): quit it before running the tests" >&2
     exit 1
   fi

@@ -605,7 +605,11 @@ impl Model {
         // connections tabs; mihomo's logs on the logs tab.
         {
             let m = model.clone();
+            // Sockets left open across sleep can hang without erroring:
+            // after each wake (NSH's `wake_count`) the open streams start over.
+            let last_wake = std::cell::Cell::new(untracked(wake_count));
             effect(move || {
+                let wake = wake_count();
                 let running = m.is_live() && m.api_ready.get();
                 let panel = m.panel_visible.get();
                 let tab = m.tab.get();
@@ -615,6 +619,9 @@ impl Model {
                 let level = if m.services.advanced || m.manager_open.get() { m.z_settings.with(|s| s.log_level.clone()) } else { m.log_level.get() };
                 let tracking = m.usage_tracking.get();
                 untracked(|| {
+                    if last_wake.replace(wake) != wake {
+                        m.stop_streams();
+                    }
                     let nodes_shown = panel && tab == RootTab::Proxy;
                     let advanced = m.services.advanced;
                     // The advanced window's sidebar shows the speeds and memory.
@@ -828,7 +835,8 @@ impl Model {
         self.target.set(ApiTarget { controller: launch.controller, secret: launch.secret });
         self.manager_section.set(launch.section);
         self.manager_open.set(true);
-        self.load_app_log_tail();
+        let app_log_len = self.load_z_log_history();
+        self.follow_app_log(app_log_len);
         let m = self.clone();
         run_root(async move {
             loop {
@@ -842,41 +850,70 @@ impl Model {
         });
     }
 
-    /// Mihobar's own last lines, from the panel's process's log file.
-    fn load_app_log_tail(&self) {
+    /// The logs page's history: the last lines of the core's and Mihobar's
+    /// log files at the page's level. The length of `mihobar.log` then.
+    fn load_z_log_history(&self) -> u64 {
+        let level = self.z_settings.with_untracked(|s| s.log_level.clone());
+        let keep = self.z_settings.with_untracked(|s| s.log_retention.max(1));
+        let (logs, app_len) = crate::conns::history(&self.services.wd.logs_dir(), &level, keep);
+        self.services.z_log_seq.set(logs.first().map_or(1, |l| l.seq + 1));
+        self.z_logs.set(Rc::new(logs));
+        app_len
+    }
+
+    /// Mihobar's lines as the panel's process writes them to `mihobar.log`
+    /// (the advanced window is a process of its own), from `offset` on,
+    /// checked every second. A shorter file was rotated: read from its start.
+    fn follow_app_log(&self, mut offset: u64) {
         let path = self.services.wd.logs_dir().join("mihobar.log");
-        let Ok(text) = std::fs::read_to_string(path) else { return };
-        let lines: Vec<&str> = text.lines().collect();
-        let start = lines.len().saturating_sub(crate::data::MAX_LOGS_HIDDEN);
-        let entries: Vec<LogEntry> = lines[start..]
-            .iter()
-            .filter_map(|line| crate::data::parse_log_line(line))
-            .map(|(at, level, message)| {
-                let mut e = self.new_entry(&level, LogSource::App, message);
-                e.at = at;
-                e
-            })
-            .collect();
-        self.logs.update(|logs| {
-            for e in entries {
-                logs.push_front(e);
+        let m = self.clone();
+        run_root(async move {
+            use std::io::{Read, Seek, SeekFrom};
+            let mut partial = String::new();
+            loop {
+                timer(Duration::from_secs(1)).await;
+                let Ok(mut file) = std::fs::File::open(&path) else { continue };
+                let len = file.metadata().map_or(0, |meta| meta.len());
+                if len < offset {
+                    offset = 0;
+                    partial.clear();
+                }
+                if len == offset {
+                    continue;
+                }
+                let mut bytes = Vec::new();
+                if file.seek(SeekFrom::Start(offset)).is_err() || (&mut file).take(len - offset).read_to_end(&mut bytes).is_err() {
+                    continue;
+                }
+                offset = len;
+                partial.push_str(&String::from_utf8_lossy(&bytes));
+                let Some(end) = partial.rfind('\n') else { continue };
+                let whole: String = partial.drain(..=end).collect();
+                for line in whole.lines() {
+                    if let Some((at, level, message)) = crate::conns::parse_app_file_line(line) {
+                        m.push_z_log(crate::conns::ZLogSource::App, at, level, message);
+                    }
+                }
             }
         });
     }
 
-    /// A core log line for the advanced window: numbered, batched every
-    /// 500 ms (zashboard's throttled flush), dropped while paused.
-    fn push_z_log(&self, level: String, payload: String) {
+    /// A log line for the advanced window (the core's or Mihobar's, at the
+    /// page's level): numbered, batched every 500 ms (zashboard's
+    /// throttled flush), dropped while paused.
+    fn push_z_log(&self, source: crate::conns::ZLogSource, at: i64, level: String, payload: String) {
+        let page_level = self.z_settings.with_untracked(|s| s.log_level.clone());
+        if source == crate::conns::ZLogSource::App && !crate::conns::level_shown(&level, &page_level) {
+            return;
+        }
         let seq = self.services.z_log_seq.get();
         self.services.z_log_seq.set(seq + 1);
         if self.z_logs_paused.get_untracked() {
             return;
         }
-        let p = crate::format::local_parts(crate::format::now_secs());
-        let time = format!("{:02}:{:02}:{:02}", p.3, p.4, p.5);
         let first = {
             let mut pending = self.services.z_log_pending.borrow_mut();
-            pending.push(crate::conns::ZLog { seq, level, time, payload });
+            pending.push(crate::conns::ZLog::new(seq, source, at, level, payload));
             pending.len() == 1
         };
         if first {
@@ -971,6 +1008,9 @@ impl Model {
             self.open_advanced_process(&exe);
             return;
         }
+        if self.z_logs.with_untracked(|l| l.is_empty()) {
+            self.load_z_log_history();
+        }
         self.manager_open.set(true);
         self.side_popover.set(None);
         if let Some(window) = self.services.manager_window.borrow().as_ref() {
@@ -1038,6 +1078,10 @@ impl Model {
             return;
         }
         log::info!("[mihobar {level}] {message}");
+        // The logs page shows Mihobar's lines beside the core's.
+        if self.z_mode() {
+            self.push_z_log(crate::conns::ZLogSource::App, crate::format::now_secs(), level.to_owned(), message.clone());
+        }
         let entry = self.new_entry(level, LogSource::App, message);
         self.append_log_entries(vec![entry]);
     }
@@ -1097,17 +1141,17 @@ impl Model {
         let (content, count) = self.logs.with_untracked(|l| {
             (l.iter().map(|e| self.formatted_log_entry(e)).collect::<Vec<_>>().join("\n"), l.len())
         });
-        set_clipboard(content);
+        let _ = set_clipboard(content);
         self.log_app("info", self.tr_args("log.logs.copied_all", &[&count]));
     }
 
     pub fn copy_log_message(&self, e: &LogEntry) {
-        set_clipboard(e.message.clone());
+        let _ = set_clipboard(e.message.clone());
         self.log_app("info", self.tr_args("log.logs.copied_message", &[]));
     }
 
     pub fn copy_log_entry(&self, e: &LogEntry) {
-        set_clipboard(self.formatted_log_entry(e));
+        let _ = set_clipboard(self.formatted_log_entry(e));
         self.log_app("info", self.tr_args("log.logs.copied_entry", &[]));
     }
 
@@ -1632,7 +1676,7 @@ impl Model {
                 self.open_stream(key, target.ws_url("/logs", &query), move |payload: &str| {
                     if let Some((level, message)) = crate::data::decode_log_payload(payload) {
                         if m.z_mode() {
-                            m.push_z_log(level, message);
+                            m.push_z_log(crate::conns::ZLogSource::Core, crate::format::now_secs(), level, message);
                         } else {
                             m.log_mihomo(&level, message);
                         }
@@ -1734,7 +1778,7 @@ impl Model {
         let script = format!(
             "export https_proxy=http://{host}:{http} http_proxy=http://{host}:{http} all_proxy=socks5://{host}:{socks}"
         );
-        set_clipboard(script);
+        let _ = set_clipboard(script);
         self.log_app("info", self.tr_args("log.proxy_export.copied", &[]));
     }
 

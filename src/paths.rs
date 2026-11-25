@@ -1,5 +1,9 @@
 //! The app's working directory (ClashBar's `WorkingDirectoryManager`):
-//! `~/Library/Application Support/mihobar` and its subdirectories.
+//! NSH's data directory for the app (`data_dir()`), which `nsh.json`'s
+//! `"dataDir"` keeps at `~/Library/Application Support/mihobar` (where
+//! Mihobar always kept it; NSH's own default would be a folder named after
+//! the app id, `dev.mihobar.app`, which Finder takes for an app), and its
+//! subdirectories.
 
 use std::io;
 use std::path::{Component, Path, PathBuf};
@@ -10,14 +14,16 @@ pub struct WorkingDirectory {
 }
 
 impl Default for WorkingDirectory {
-    /// `~/Library/Application Support/mihobar`, or `$MIHOBAR_HOME` (tests
-    /// and development runs keep their data apart with it).
+    /// NSH's data directory, or `$MIHOBAR_HOME` (tests and development runs
+    /// keep their data apart with it).
     fn default() -> Self {
         if let Some(dir) = std::env::var_os("MIHOBAR_HOME").filter(|d| !d.is_empty()) {
             return Self { root: PathBuf::from(dir) };
         }
-        let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("/"));
-        Self { root: home.join("Library/Application Support/mihobar") }
+        let root = nsh_core::prelude::data_dir()
+            .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join("Library/Application Support/mihobar")))
+            .unwrap_or_else(|| PathBuf::from("mihobar"));
+        Self { root }
     }
 }
 

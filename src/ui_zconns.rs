@@ -543,7 +543,9 @@ fn details_sheet(m: Model, state: State) -> impl IntoElement {
     let mut actions = vec![icon_button(icons::z_copy, {
         let m = m.clone();
         move || m.tr("z.copy")
-    }, move || set_clipboard(copy.clone()))
+    }, move || {
+        let _ = set_clipboard(copy.clone());
+    })
     .into_element()];
     if !c.closed {
         actions.push(

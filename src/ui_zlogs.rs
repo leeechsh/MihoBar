@@ -1,12 +1,13 @@
-//! The advanced window's logs page (zashboard's): the core's log lines at
-//! the page's own level, newest first, by level or type, searched with a
-//! regex, some hidden by another; download, pause, clear.
+//! The advanced window's logs page (zashboard's): the core's and
+//! Mihobar's log lines at the page's own level, newest first (the last
+//! lines of their files, then live), by source, level or type, searched
+//! with a regex, some hidden by another; download, pause, clear.
 
 use nsh_core::element::desktop::MenuItem;
 use nsh_core::element::input;
 use nsh_core::prelude::*;
 
-use crate::conns::{self, ZLog};
+use crate::conns::{self, ZLog, ZLogSource};
 use crate::icons;
 use crate::model::Model;
 use crate::style::z;
@@ -31,18 +32,34 @@ pub fn logs_page(m: Model) -> impl IntoElement {
     let settings_open = signal(false);
     let list_m = m.clone();
     let shown = computed(move || {
-        let (hide_on, hide) = list_m.z_settings.with(|s| (s.log_hide_enabled, s.log_hide_regex.clone()));
+        let (hide_on, hide, source) = list_m.z_settings.with(|s| (s.log_hide_enabled, s.log_hide_regex.clone(), s.log_source.clone()));
         let search = search.get();
         let kind = type_filter.get();
-        list_m.z_logs.with(|logs| conns::filter_logs(logs, &kind, &search, hide_on.then_some(hide.as_str())))
+        list_m.z_logs.with(|logs| conns::filter_logs(logs, &source, &kind, &search, hide_on.then_some(hide.as_str())))
     });
 
     view()
         .flex_1()
         .pt(px(30.0))
         .child(controls(m.clone(), search, type_filter, settings_open))
-        .child(log_list(shown))
+        .child(log_list(m.clone(), shown))
         .child(when(move || settings_open.get(), move || settings_sheet(m.clone(), settings_open)))
+}
+
+/// The source filter's label for `key` ("", "app" or "core").
+fn source_label(key: &str) -> &'static str {
+    match key {
+        "app" => "z.source_app",
+        "core" => "z.source_core",
+        _ => "z.source_all",
+    }
+}
+
+fn source_tag(m: &Model, source: ZLogSource) -> String {
+    m.tr(match source {
+        ZLogSource::App => "z.source_app",
+        ZLogSource::Core => "z.source_core",
+    })
 }
 
 fn controls(m: Model, search: Signal<String>, type_filter: Signal<String>, settings_open: Signal<bool>) -> impl IntoElement {
@@ -64,6 +81,28 @@ fn controls(m: Model, search: Signal<String>, type_filter: Signal<String>, setti
                 .collect()
         },
     );
+    let source_m = m.clone();
+    let source_items_m = m.clone();
+    let sources = select_menu(
+        move || {
+            let key = source_m.z_settings.with(|s| s.log_source.clone());
+            source_m.tr(source_label(&key))
+        },
+        120.0,
+        move || {
+            let m = source_items_m.clone();
+            let current = m.z_settings.with_untracked(|s| s.log_source.clone());
+            ["", "app", "core"]
+                .iter()
+                .map(|&key| {
+                    let m2 = m.clone();
+                    MenuItem::new(m.tr(source_label(key)))
+                        .checked(current == key)
+                        .on_select(move || m2.z_settings.update(|s| s.log_source = key.to_owned()))
+                })
+                .collect()
+        },
+    );
     let type_m = m.clone();
     let type_items_m = m.clone();
     let types = select_menu(
@@ -81,7 +120,7 @@ fn controls(m: Model, search: Signal<String>, type_filter: Signal<String>, setti
                         levels.push(l.level.clone());
                     }
                     let k = l.kind().to_owned();
-                    if !kinds.contains(&k) {
+                    if !k.is_empty() && !kinds.contains(&k) {
                         kinds.push(k);
                     }
                 }
@@ -114,6 +153,7 @@ fn controls(m: Model, search: Signal<String>, type_filter: Signal<String>, setti
         .px(px(12.0))
         .pb(px(8.0))
         .child(level)
+        .child(sources)
         .child(types)
         .child(search)
         .child(view().flex_1())
@@ -138,24 +178,45 @@ fn controls(m: Model, search: Signal<String>, type_filter: Signal<String>, setti
         .child(icon_button(icons::z_xmark, move || clear_l.tr("z.clear_logs"), move || clear_m.z_logs.set(std::rc::Rc::new(Vec::new()))))
 }
 
-/// Writes the logs, oldest first, to `Downloads/YYYY-MM-DD HH-mm-ss.log`
-/// (zashboard downloads them) and shows the file.
+/// Saves the logs, oldest first, where the user chooses (zashboard
+/// downloads `YYYY-MM-DD HH-mm-ss.log`), then shows the file: NSH's save
+/// dialog and file manager, on every platform.
 fn download(m: &Model) {
-    let text: String = m.z_logs.with_untracked(|logs| logs.iter().rev().map(|l| format!("{} {} {}\n", l.time, l.level.to_uppercase(), l.payload)).collect());
+    let (app, core) = (source_tag(m, ZLogSource::App), source_tag(m, ZLogSource::Core));
+    let text: String = m.z_logs.with_untracked(|logs| {
+        logs.iter()
+            .rev()
+            .map(|l| {
+                let p = crate::format::local_parts(l.at);
+                let source = if l.source == ZLogSource::App { &app } else { &core };
+                format!("{:04}-{:02}-{:02} {} [{source}] {} {}\n", p.0, p.1, p.2, l.time, l.level.to_uppercase(), l.payload)
+            })
+            .collect()
+    });
     let p = crate::format::local_parts(crate::format::now_secs());
     let name = format!("{:04}-{:02}-{:02} {:02}-{:02}-{:02}.log", p.0, p.1, p.2, p.3, p.4, p.5);
-    let Some(home) = std::env::var_os("HOME") else { return };
-    let path = std::path::Path::new(&home).join("Downloads").join(name);
-    if std::fs::write(&path, text).is_ok() {
-        let _ = std::process::Command::new("/usr/bin/open").arg("-R").arg(&path).spawn();
-    }
+    let title = m.tr("z.download_logs");
+    spawn(async move {
+        let mut dialog = nsh_core::file_dialog::SaveDialog::new().file_name(name);
+        dialog.title = Some(title);
+        dialog.filters = vec![nsh_core::file_dialog::FileFilter::new("Log", ["log"])];
+        let Ok(Some(path)) = pick_save_path(dialog).await else { return };
+        if std::fs::write(&path, text).is_ok() {
+            let _ = reveal_path(path).await;
+        }
+    });
 }
 
-fn log_list(shown: Memo<Vec<ZLog>>) -> impl IntoElement {
+fn log_list(m: Model, shown: Memo<Vec<ZLog>>) -> impl IntoElement {
+    let (app, core) = (source_tag(&m, ZLogSource::App), source_tag(&m, ZLogSource::Core));
     let list = virtual_list(move || shown.with(Vec::len), move |at: nsh_core::element::Position| {
         let item = computed(move || shown.with(|l| l.get(at.index()).cloned()));
+        let (app, core) = (app.clone(), core.clone());
         view().child(dynamic(move || match item.get() {
-            Some(log) => log_row(log).into_element(),
+            Some(log) => {
+                let tag = if log.source == ZLogSource::App { app.clone() } else { core.clone() };
+                log_row(log, tag).into_element()
+            }
             None => view().into_element(),
         }))
     })
@@ -174,9 +235,10 @@ fn log_list(shown: Memo<Vec<ZLog>>) -> impl IntoElement {
         .child(list)
 }
 
-/// A line (zashboard's `LogsCard`): its number, level and time over the
-/// text.
-fn log_row(log: ZLog) -> impl IntoElement {
+/// A line (zashboard's `LogsCard`): its number, source, level and time
+/// over the text.
+fn log_row(log: ZLog, tag: String) -> impl IntoElement {
+    let app = log.source == ZLogSource::App;
     let seq = format!("{:02}", log.seq);
     view()
         .gap(px(4.0))
@@ -191,6 +253,16 @@ fn log_row(log: ZLog) -> impl IntoElement {
                 .items_center()
                 .gap(px(8.0))
                 .child(text(seq).text_size(px(12.0)).text_color(z::text(0.4)))
+                .child(
+                    text(tag)
+                        .text_size(px(10.0))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(if app { z::info() } else { z::text(0.55) })
+                        .px(px(6.0))
+                        .py(px(1.0))
+                        .rounded(px(5.0))
+                        .bg(if app { z::info().opacity(0.14) } else { z::base300(0.45) }),
+                )
                 .child(text(log.level.to_uppercase()).text_size(px(11.0)).text_color(level_color(&log.level)))
                 .child(view().flex_1())
                 .child(text(log.time).text_size(px(12.0)).text_color(z::text(0.4))),

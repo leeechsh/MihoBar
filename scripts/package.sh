@@ -40,8 +40,12 @@ PLIST
 
 # Wi-Fi auto-switch reads the Wi-Fi name, which needs the location
 # permission and its reason (as ClashBar's Info.plist has).
-/usr/libexec/PlistBuddy -c "Delete :NSLocationWhenInUseUsageDescription" "$APP/Contents/Info.plist" 2>/dev/null || true
-/usr/libexec/PlistBuddy -c "Add :NSLocationWhenInUseUsageDescription string 'Mihobar uses your current Wi-Fi name to switch proxy config profiles automatically.'" "$APP/Contents/Info.plist"
+# nsh-extra's location feature adds a generic NSLocationUsageDescription:
+# both keys say what Mihobar uses it for.
+for key in NSLocationWhenInUseUsageDescription NSLocationUsageDescription; do
+  /usr/libexec/PlistBuddy -c "Delete :$key" "$APP/Contents/Info.plist" 2>/dev/null || true
+  /usr/libexec/PlistBuddy -c "Add :$key string 'Mihobar uses your current Wi-Fi name to switch proxy config profiles automatically.'" "$APP/Contents/Info.plist"
+done
 
 codesign --force --sign "$IDENTITY" --identifier dev.mihobar.helper --options runtime "$HELPER_DIR/dev.mihobar.helper"
 codesign --force --sign "$IDENTITY" --identifier dev.mihobar.app "$APP"
