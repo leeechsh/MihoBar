@@ -461,46 +461,6 @@ fn quick_rows(m: Model, win: WindowRef) -> impl IntoElement {
     // A submenu, as a group's row: it opens on hover.
     let switch_config = hover_opens(&m, &win, switch_config, 36.0, || SideKind::Configs);
 
-    let copy_m = m.clone();
-    let copied = signal(false);
-    let copy_terminal = quick_row(
-        icons::terminal(),
-        style::warning,
-        {
-            let m = m.clone();
-            move || m.tr("ui.quick.copy_terminal")
-        },
-        value_pill(
-            pill_text(
-                {
-                    let m = m.clone();
-                    move || {
-                        if copied.get() {
-                            m.tr("ui.quick.copied")
-                        } else {
-                            // No port while the core is stopped: the host alone.
-                            let target = m.local_proxy_target_display();
-                            target.strip_suffix(":0").map(str::to_owned).unwrap_or(target)
-                        }
-                    }
-                },
-                move || if copied.get() { style::positive() } else { style::primary_label() },
-            ),
-            move || if copied.get() { icons::checkmark_circle_fill() } else { icons::doc_on_doc() },
-            move || if copied.get() { style::positive() } else { style::tertiary_label() },
-        )
-        .bg(move || if copied.get() { style::positive().opacity(0.16) } else { style::control_track() })
-        .hover(|s| s.bg(style::fill(0.1)))
-        .tooltip(crate::widgets::tip({
-            let m = m.clone();
-            move || m.tr("ui.quick.copy_terminal_hint")
-        }))
-        .on_press(move || {
-            copy_m.copy_proxy_command("127.0.0.1");
-            copied.set(true);
-            set_timeout(std::time::Duration::from_millis(1200), move || copied.set(false));
-        }),
-    );
     // The other rows close the config menu as the pointer reaches them.
     let closes = |row: AnyElement| view().on_mouse_enter(close_configs_on_hover(&m)).child(row);
     widgets::card()
@@ -511,8 +471,43 @@ fn quick_rows(m: Model, win: WindowRef) -> impl IntoElement {
         .child(closes(system_proxy_row(m.clone()).into_element()))
         .child(widgets::divider(ROW_INSET))
         .child(closes(tun_row(m.clone()).into_element()))
-        .child(widgets::divider(ROW_INSET))
-        .child(closes(copy_terminal.into_element()))
+}
+
+/// The terminal proxy command's copy button (Settings → Proxy Ports): the
+/// address it exports, a copy mark, and a moment of "Copied" after a press.
+pub(crate) fn copy_command_pill(m: &Model) -> nsh_core::element::View {
+    let copy_m = m.clone();
+    let copied = signal(false);
+    value_pill(
+        pill_text(
+            {
+                let m = m.clone();
+                move || {
+                    if copied.get() {
+                        m.tr("ui.quick.copied")
+                    } else {
+                        // No port while the core is stopped: the host alone.
+                        let target = m.local_proxy_target_display();
+                        target.strip_suffix(":0").map(str::to_owned).unwrap_or(target)
+                    }
+                }
+            },
+            move || if copied.get() { style::positive() } else { style::primary_label() },
+        ),
+        move || if copied.get() { icons::checkmark_circle_fill() } else { icons::doc_on_doc() },
+        move || if copied.get() { style::positive() } else { style::tertiary_label() },
+    )
+    .bg(move || if copied.get() { style::positive().opacity(0.16) } else { style::control_track() })
+    .hover(|s| s.bg(style::fill(0.1)))
+    .tooltip(crate::widgets::tip({
+        let m = m.clone();
+        move || m.tr("ui.quick.copy_terminal_hint")
+    }))
+    .on_press(move || {
+        copy_m.copy_proxy_command("127.0.0.1");
+        copied.set(true);
+        set_timeout(std::time::Duration::from_millis(1200), move || copied.set(false));
+    })
 }
 
 // --- Section headers ---------------------------------------------------------

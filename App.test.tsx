@@ -27,8 +27,9 @@ test("shows the panel's sections", async () => {
   // The proxy tab: quick rows and the (still empty) groups.
   expect(texts).toContain("切换配置");
   expect(texts).toContain("Mihobar.yaml");
-  expect(texts).toContain("复制终端命令");
   expect(texts).toContain("暂无代理组");
+  // The terminal command is a setting of the ports, not a quick row.
+  expect(texts).not.toContain("复制终端命令");
 });
 
 test("switches tabs and opens the advanced window", async () => {
@@ -137,7 +138,7 @@ test("lists connections", async () => {
 test("shows the settings and switches the language", async () => {
   const app = await open(".", { platform: "macos", locale: "zh-Hans-CN" });
   await app.press("设置");
-  for (const label of ["基础设置", "内核设置", "代理端口", "系统维护", "开机自启", "内核自启", "日志级别", "代理绕过", "允许局域网", "IPv6", "TCP 并发", "混合端口", "清理 DNS 缓存", "更新 Geo 数据库"]) {
+  for (const label of ["基础设置", "内核设置", "代理端口", "系统维护", "开机自启", "内核自启", "日志级别", "代理绕过", "允许局域网", "IPv6", "TCP 并发", "混合端口", "复制终端命令", "清理 DNS 缓存", "更新 Geo 数据库"]) {
     await app.waitFor(label);
   }
   // The language follows the system's (Chinese here) until one is chosen.

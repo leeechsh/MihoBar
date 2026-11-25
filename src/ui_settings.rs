@@ -464,6 +464,21 @@ fn core_sections(m: Model) -> impl IntoElement {
                     .map(|(&(key, label), icon)| port_row(&m, key, label, icon))
                     .collect::<Vec<_>>(),
             ),
+        )
+        // The terminal's proxy variables for these ports (moved here from
+        // the panel: most users never need it, issue #1).
+        .child(
+            view()
+                .flex_row()
+                .items_center()
+                .px(px(style::SPACE6))
+                .min_h(px(34.0))
+                .child(row_label(icons::terminal(), {
+                    let m = m.clone();
+                    move || m.tr("ui.quick.copy_terminal")
+                }))
+                .child(view().flex_1())
+                .child(crate::ui_proxy::copy_command_pill(&m)),
         );
 
     // Maintenance.
