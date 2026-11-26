@@ -138,6 +138,16 @@ fn advanced_app(launch: crate::model::AdvancedLaunch) -> impl IntoElement {
         .on_open_change(|change| {
             if !change.open {
                 nsh_core::element::desktop::quit();
+                // And for certain: NSH 0.7 can spin its main thread on a
+                // closed window's past frame deadline (`keep_deadline`
+                // rescheduling itself at 0 ms), and the quit request waits
+                // on that thread. The window's settings are saved as they
+                // change, so a plain exit a second later loses nothing, and
+                // the panel can open the window again.
+                std::thread::spawn(|| {
+                    std::thread::sleep(std::time::Duration::from_secs(1));
+                    std::process::exit(0);
+                });
             }
         })
         .content(move || {
