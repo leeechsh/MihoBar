@@ -169,3 +169,31 @@ mod tests {
         assert_eq!(normalized_config_file_name(" ", Some("d")).as_deref(), Some("d.yaml"));
     }
 }
+
+/// A profile as the panel names it: `file` without `.yaml` / `.yml`, unless
+/// another of `all` has the same name (`a.yaml` and `a.yml` keep theirs).
+pub fn profile_label(file: &str, all: &[String]) -> String {
+    let stem = |f: &str| -> Option<String> {
+        let lower = f.to_ascii_lowercase();
+        [".yaml", ".yml"].iter().find(|e| lower.ends_with(*e)).map(|e| f[..f.len() - e.len()].to_owned())
+    };
+    let Some(own) = stem(file) else { return file.to_owned() };
+    let shared = all.iter().filter(|f| f.as_str() != file).any(|f| stem(f).as_deref() == Some(own.as_str()));
+    if shared || own.is_empty() { file.to_owned() } else { own }
+}
+
+#[cfg(test)]
+mod profile_label_tests {
+    use super::profile_label;
+
+    #[test]
+    fn drops_the_extension_unless_ambiguous() {
+        let all: Vec<String> = ["leeechsh.yaml", "Mihobar.yaml", "a.yaml", "a.yml", "Work.YML", "plain"].iter().map(|s| s.to_string()).collect();
+        assert_eq!(profile_label("leeechsh.yaml", &all), "leeechsh");
+        assert_eq!(profile_label("Work.YML", &all), "Work");
+        assert_eq!(profile_label("a.yaml", &all), "a.yaml");
+        assert_eq!(profile_label("a.yml", &all), "a.yml");
+        assert_eq!(profile_label("plain", &all), "plain");
+        assert_eq!(profile_label(".yaml", &all), ".yaml");
+    }
+}

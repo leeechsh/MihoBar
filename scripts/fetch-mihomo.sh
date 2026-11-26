@@ -11,9 +11,12 @@ VERSION="${MIHOMO_VERSION:-}"
 ARCH="${TARGET_ARCH:-$(uname -m)}"
 OUT="$ROOT/assets/bin/mihomo.gz"
 
+# The builds of the current Go (MihoBar needs macOS 14, so the go120/go122
+# builds for older macOS are not needed); on Intel the x86-64-v3 one, as
+# every Intel Mac that runs macOS 14 (2018 and later) has AVX2.
 case "$ARCH" in
-  x86_64 | amd64) CANDIDATES=(amd64-v2-go122 amd64) ;;
-  arm64 | aarch64) CANDIDATES=(arm64-go122 arm64) ;;
+  x86_64 | amd64) CANDIDATES=(amd64-v3 amd64) ;;
+  arm64 | aarch64) CANDIDATES=(arm64) ;;
   *) echo "unsupported architecture: $ARCH" >&2; exit 1 ;;
 esac
 

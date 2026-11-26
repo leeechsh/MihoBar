@@ -1238,6 +1238,13 @@ impl Model {
         self.settings.update(|s| s.selected_config = selected);
     }
 
+    /// A profile as the panel names it: its file name without `.yaml` /
+    /// `.yml`, unless another profile has the same name (`a.yaml` and
+    /// `a.yml` keep theirs).
+    pub fn profile_label(&self, file: &str) -> String {
+        self.configs.with(|all| crate::config::profile_label(file, all))
+    }
+
     pub fn selected_config_name(&self) -> Option<String> {
         self.settings.with(|s| s.selected_config.clone())
     }

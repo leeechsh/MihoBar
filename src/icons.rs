@@ -163,15 +163,23 @@ icons! {
 /// MihoBar's cat (an original drawing): its head with pointed ears.
 const CAT_HEAD: &str = "M4.2 10.2L4.8 3.4L9.3 6.9Q12 6.1 14.7 6.9L19.2 3.4L19.8 10.2Q21 12.1 21 14.2C21 18.4 17.2 21 12 21C6.8 21 3 18.4 3 14.2Q3 12.1 4.2 10.2Z";
 
+/// The cat's eyes (open), as subpaths that `evenodd` cuts out of the head.
+const EYES_OPEN: &str = "M7.55 14a1.35 1.6 0 1 0 2.7 0a1.35 1.6 0 1 0 -2.7 0ZM13.75 14a1.35 1.6 0 1 0 2.7 0a1.35 1.6 0 1 0 -2.7 0Z";
+/// Narrowed, focused eyes (TUN), as subpaths cut out of the head.
+const EYES_FOCUSED: &str = "M7.4 13.35h3.1v1.2h-3.1ZM13.5 13.35h3.1v1.2h-3.1Z";
+/// The nose, cut out of the head.
+const NOSE: &str = "M10.95 16.9h2.1l-1.05 1.25Z";
+
 /// The brand mark (header logo): the cat, with open eyes.
 pub fn brand_logo() -> String {
-    svg(&cat_open())
+    svg(&cat_face(EYES_OPEN))
 }
 
-fn cat_open() -> String {
-    format!(
-        "<path d='{CAT_HEAD}' fill='#000' stroke='none'/><ellipse cx='8.9' cy='14' rx='1.35' ry='1.6' fill='#fff' stroke='none'/><ellipse cx='15.1' cy='14' rx='1.35' ry='1.6' fill='#fff' stroke='none'/><path d='M11.2 17.1h1.6l-.8.9z' fill='#fff' stroke='#fff' stroke-width='.8'/>"
-    )
+/// A solid head whose eyes and nose are holes: a menu bar icon is a
+/// template image, drawn from its opacity alone, so a face drawn in white
+/// on the head would not show; cut out, it does.
+fn cat_face(eyes: &str) -> String {
+    format!("<path d='{CAT_HEAD}{eyes}{NOSE}' fill='#000' fill-rule='evenodd' stroke='none'/>")
 }
 
 /// Asleep (the core stopped): an outline, eyes closed.
@@ -179,42 +187,59 @@ fn cat_sleep() -> String {
     format!("<path d='{CAT_HEAD}' stroke-width='1.7'/><path d='M7.6 14.4q1.3 1.1 2.6 0M13.8 14.4q1.3 1.1 2.6 0' stroke-width='1.6'/>")
 }
 
-/// TUN on: the cat with narrowed, focused eyes.
-fn cat_tun() -> String {
-    format!("<path d='{CAT_HEAD}' fill='#000' stroke='none'/><path d='M7.6 13.9h2.7M13.7 13.9h2.7' stroke='#fff' stroke-width='1.7'/><path d='M11.2 17.1h1.6l-.8.9z' fill='#fff' stroke='#fff' stroke-width='.8'/>")
+/// Awake (the core runs, taking over no traffic): an outline, eyes open.
+fn cat_awake() -> String {
+    format!(
+        "<path d='{CAT_HEAD}' stroke-width='1.7'/><ellipse cx='8.9' cy='14' rx='1.2' ry='1.45' fill='#000' stroke='none'/><ellipse cx='15.1' cy='14' rx='1.2' ry='1.45' fill='#000' stroke='none'/>"
+    )
 }
 
-/// The menu bar marks as SVG documents (for the hand-drawn status item).
+/// What the menu bar cat shows: whether the core runs, and whether it
+/// takes over traffic, through the system proxy or TUN (TUN first).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MenuBarState {
+    Stopped,
+    Running,
+    SystemProxy,
+    Tun,
+}
+
+impl MenuBarState {
+    pub fn of(running: bool, system_proxy: bool, tun: bool) -> Self {
+        match (running, tun, system_proxy) {
+            (false, _, _) => Self::Stopped,
+            (true, true, _) => Self::Tun,
+            (true, false, true) => Self::SystemProxy,
+            (true, false, false) => Self::Running,
+        }
+    }
+
+    fn body(self) -> String {
+        match self {
+            Self::Stopped => cat_sleep(),
+            Self::Running => cat_awake(),
+            Self::SystemProxy => cat_face(EYES_OPEN),
+            Self::Tun => cat_face(EYES_FOCUSED),
+        }
+    }
+}
+
 /// A menu bar cat as an SVG document: its head (x 3–21, y 3.4–21) and the
-/// sleeping outline's stroke fill the canvas, with no margin of the 24-point
-/// icon grid, so it fills the menu bar's 18-point icon square (NSH's tray
-/// and the speed item alike), the same in every state.
+/// outlines' stroke fill the canvas, with no margin of the 24-point icon
+/// grid, so it fills the menu bar's 18-point icon square (NSH's tray and the
+/// speed item alike), the same in every state.
 fn status_doc(body: &str) -> String {
     format!(
         "<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='2.1 2.3 19.8 19.8' fill='none' stroke='#000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'>{body}</svg>"
     )
 }
 
-fn status_uri(body: &str) -> String {
-    format!("data:image/svg+xml;utf8,{}", percent(&status_doc(body)))
+/// The menu bar cat for `state`, as an SVG document (the speed item).
+pub fn status_svg(state: MenuBarState) -> String {
+    status_doc(&state.body())
 }
 
-pub fn status_svg(running: bool, tun: bool) -> String {
-    status_doc(&match (running, tun) {
-        (false, _) => cat_sleep(),
-        (true, true) => cat_tun(),
-        (true, false) => cat_open(),
-    })
-}
-
-pub fn status_run() -> String {
-    status_uri(&cat_open())
-}
-
-pub fn status_sleep() -> String {
-    status_uri(&cat_sleep())
-}
-
-pub fn status_tun() -> String {
-    status_uri(&cat_tun())
+/// The menu bar cat for `state`, as an image URI (NSH's tray).
+pub fn status_icon(state: MenuBarState) -> String {
+    format!("data:image/svg+xml;utf8,{}", percent(&status_doc(&state.body())))
 }

@@ -35,8 +35,8 @@ const FONT_SIZE: f64 = 10.0;
 #[derive(Clone, Debug, PartialEq)]
 pub struct Display {
     pub show_icon: bool,
-    pub running: bool,
-    pub tun: bool,
+    /// What the cat shows (stopped, running, system proxy, TUN).
+    pub state: crate::icons::MenuBarState,
     pub up: String,
     pub down: String,
 }
@@ -102,7 +102,7 @@ fn icon_image(svg: &str) -> Option<Retained<NSImage>> {
 /// template at every scale.
 fn compose(display: &Display, height: f64) -> Retained<NSImage> {
     let width = if display.show_icon { ICON_SIZE + ICON_GAP + TEXT_WIDTH } else { TEXT_WIDTH };
-    let icon = display.show_icon.then(|| icon_image(&crate::icons::status_svg(display.running, display.tun))).flatten();
+    let icon = display.show_icon.then(|| icon_image(&crate::icons::status_svg(display.state))).flatten();
     let up = NSString::from_str(&display.up);
     let down = NSString::from_str(&display.down);
     let text_x = if display.show_icon { ICON_SIZE + ICON_GAP } else { 0.0 };

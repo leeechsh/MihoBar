@@ -460,14 +460,18 @@ fn quick_rows(m: Model, win: WindowRef) -> impl IntoElement {
             pill_text(
                 {
                     let m = m.clone();
-                    move || m.selected_config_name().unwrap_or_else(|| m.tr("ui.common.unknown"))
+                    move || m.selected_config_name().map(|f| m.profile_label(&f)).unwrap_or_else(|| m.tr("ui.common.unknown"))
                 },
                 style::primary_label,
             ),
             icons::chevron_right,
             style::tertiary_label,
         )
-        .max_w(px(170.0)),
+        .max_w(px(170.0))
+        .tooltip(crate::widgets::tip({
+            let m = m.clone();
+            move || m.selected_config_name().unwrap_or_default()
+        })),
     )
     .element_ref(&config_ref)
     .hover(|s| s.bg(style::fill(0.05)))
@@ -1603,7 +1607,16 @@ fn config_menu_row(m: Model, name: ReadSignal<String>) -> impl IntoElement {
             view()
                 .flex_1()
                 .min_w(px(0.0))
-                .child(text(move || name.get()).truncate().text_size(px(font::BODY)).font_weight(FontWeight::MEDIUM).text_color(style::primary_label()))
+                .child({
+                    let m = m.clone();
+                    text(move || m.profile_label(&name.get()))
+                        .truncate()
+                        .text_size(px(font::BODY))
+                        .font_weight(FontWeight::MEDIUM)
+                        .text_color(style::primary_label())
+                        // The file's own name on hover.
+                        .tooltip(crate::widgets::tip(move || name.get()))
+                })
                 .child(when(subtitle_shown, move || {
                     let subtitle = subtitle.clone();
                     let phase = phase.clone();

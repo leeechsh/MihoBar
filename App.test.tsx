@@ -26,7 +26,8 @@ test("shows the panel's sections", async () => {
   }
   // The proxy tab: quick rows and the (still empty) groups.
   expect(texts).toContain("配置");
-  expect(texts).toContain("Mihobar.yaml");
+  expect(texts).toContain("Mihobar");
+  expect(texts).not.toContain("Mihobar.yaml");
   expect(texts).toContain("暂无代理组");
   // The terminal command is a setting of the ports, not a quick row.
   expect(texts).not.toContain("终端代理");
@@ -247,14 +248,15 @@ test("imports, lists and deletes a subscription", async () => {
   expect(app.dialogs()[0].title).toBe("订阅导入成功");
   await app.press("配置");
   await app.waitFor("远程配置");
-  await app.waitFor("sub.yaml");
+  // The profile shows without its extension.
+  await app.waitFor("sub");
   await app.waitUntil(() => app.texts().some((t) => t.startsWith("自动 ")));
-  await app.rightClick("sub.yaml");
+  await app.rightClick("sub");
   await app.chooseMenuItem("删除");
   await app.waitUntil(() => app.dialogs().length > 1, { timeout: 5000 });
   await app.press("配置");
-  await app.waitFor("Mihobar.yaml");
-  expect(app.texts()).not.toContain("sub.yaml");
+  await app.waitFor("Mihobar");
+  expect(app.texts()).not.toContain("sub");
 }, 60000);
 
 test("shows the Wi-Fi auto-switch in the config menu", async () => {

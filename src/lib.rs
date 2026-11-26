@@ -200,13 +200,8 @@ fn panel_app() -> impl IntoElement {
                     #[cfg(target_os = "macos")]
                     let _ = run_on_main_thread(crate::statusitem::hide);
                 }
-                let icon = if !running {
-                    crate::icons::status_sleep()
-                } else if m.tun_enabled() {
-                    crate::icons::status_tun()
-                } else {
-                    crate::icons::status_run()
-                };
+                let state = crate::icons::MenuBarState::of(running, m.system_proxy_enabled.get(), m.tun_enabled());
+                let icon = crate::icons::status_icon(state);
                 let toggle = toggle.clone();
                 set_tray(tray().icon(icon).tooltip("MihoBar").on_click(move |click| {
                     toggle(click.bounds.map(crate::geometry::Rect::from_bounds));
@@ -228,8 +223,7 @@ fn panel_app() -> impl IntoElement {
             {
                 let display = crate::statusitem::Display {
                     show_icon: mode == crate::settings::StatusBarDisplayMode::IconAndSpeed,
-                    running,
-                    tun: m.tun_enabled(),
+                    state: crate::icons::MenuBarState::of(running, m.system_proxy_enabled.get(), m.tun_enabled()),
                     up,
                     down,
                 };
