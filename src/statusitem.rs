@@ -20,8 +20,14 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 
 use crate::geometry::Rect;
 
-const ICON_SIZE: f64 = 24.0;
-const TEXT_WIDTH: f64 = 43.0;
+/// The cat's side: NSH's tray icon size (the menu bar's 18-point icons), so
+/// the icon-only item and this one show it alike.
+const ICON_SIZE: f64 = 18.0;
+/// Between the cat (which fills its square) and the rates.
+const ICON_GAP: f64 = 3.0;
+/// The widest rate, "9.99M↑" (40.7 points at the item's font); the rates
+/// are right-aligned in it.
+const TEXT_WIDTH: f64 = 41.0;
 const LINE_HEIGHT: f64 = 11.0;
 const FONT_SIZE: f64 = 10.0;
 
@@ -95,11 +101,11 @@ fn icon_image(svg: &str) -> Option<Retained<NSImage>> {
 /// The item's image: the icon and the two speed lines, drawn as a
 /// template at every scale.
 fn compose(display: &Display, height: f64) -> Retained<NSImage> {
-    let width = if display.show_icon { ICON_SIZE + TEXT_WIDTH } else { TEXT_WIDTH };
+    let width = if display.show_icon { ICON_SIZE + ICON_GAP + TEXT_WIDTH } else { TEXT_WIDTH };
     let icon = display.show_icon.then(|| icon_image(&crate::icons::status_svg(display.running, display.tun))).flatten();
     let up = NSString::from_str(&display.up);
     let down = NSString::from_str(&display.down);
-    let text_x = if display.show_icon { ICON_SIZE } else { 0.0 };
+    let text_x = if display.show_icon { ICON_SIZE + ICON_GAP } else { 0.0 };
     let handler = RcBlock::new(move |bounds: NSRect| -> Bool {
         if let Some(icon) = &icon {
             let y = ((bounds.size.height - ICON_SIZE) / 2.0).floor();

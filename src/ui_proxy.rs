@@ -243,39 +243,44 @@ fn sparkline(m: Model, width: f32, height: f32) -> impl IntoElement {
 }
 
 /// A rate: its arrow, the number large and its unit small beside it, and
-/// the total under them.
+/// the total under them. `trailing` mirrors it against the card's right
+/// edge (the download, across from the upload at the left).
 fn rate_stat(
     arrow: String,
     color: fn() -> AdaptiveColor,
     rate: impl Fn() -> String + 'static,
     total: impl Fn() -> String + 'static,
+    trailing: bool,
 ) -> impl IntoElement {
     let rate = Rc::new(rate);
     let (number, unit) = (rate.clone(), rate);
-    view()
-        .flex_1()
-        .min_w(px(0.0))
-        .gap(px(1.0))
-        .child(
-            view()
-                .flex_row()
-                .items_baseline()
-                .gap(px(4.0))
-                .child(view().self_center().child(widgets::icon(arrow, 11.0, color)))
-                .child(
-                    text(move || number().split(' ').next().unwrap_or("").to_owned())
-                        .text_size(px(font::TITLE3))
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .tabular_nums()
-                        .text_color(style::primary_label()),
-                )
-                .child(
-                    text(move || unit().split(' ').nth(1).unwrap_or("").to_owned())
-                        .text_size(px(font::CAPTION))
-                        .text_color(style::secondary_label()),
-                ),
+    let arrow = view().self_center().child(widgets::icon(arrow, 11.0, color)).into_element();
+    let number = text(move || number().split(' ').next().unwrap_or("").to_owned())
+        .text_size(px(font::TITLE3))
+        .font_weight(FontWeight::SEMIBOLD)
+        .tabular_nums()
+        .text_color(style::primary_label())
+        .into_element();
+    let unit = text(move || unit().split(' ').nth(1).unwrap_or("").to_owned())
+        .text_size(px(font::CAPTION))
+        .text_color(style::secondary_label())
+        .into_element();
+    let line = view().flex_row().items_baseline().gap(px(4.0));
+    // The arrow at the outer edge, the total under the number.
+    let (line, total) = if trailing {
+        (
+            line.child(number).child(unit).child(arrow),
+            text(total).pr(px(15.0)).text_size(px(font::CAPTION)).tabular_nums().text_color(style::secondary_label()),
         )
-        .child(text(total).pl(px(15.0)).text_size(px(font::CAPTION)).tabular_nums().text_color(style::secondary_label()))
+    } else {
+        (
+            line.child(arrow).child(number).child(unit),
+            text(total).pl(px(15.0)).text_size(px(font::CAPTION)).tabular_nums().text_color(style::secondary_label()),
+        )
+    };
+    let column = view().flex_1().min_w(px(0.0)).gap(px(1.0));
+    let column = if trailing { column.items_end() } else { column.items_start() };
+    column.child(line).child(total)
 }
 
 /// A figure of the bottom row: an icon and its text (connections, memory).
@@ -306,12 +311,14 @@ fn traffic_overview(m: Model) -> impl IntoElement {
                     style::info,
                     move || format::speed(up_m.traffic.get().up),
                     move || up_total_m.tr_args("ui.overview.total", &[&format::bytes_compact(up_total_m.history.with(|h| h.up_total))]),
+                    false,
                 ))
                 .child(rate_stat(
                     icons::arrow_down_circle(),
                     style::positive,
                     move || format::speed(down_m.traffic.get().down),
                     move || down_total_m.tr_args("ui.overview.total", &[&format::bytes_compact(down_total_m.history.with(|h| h.down_total))]),
+                    true,
                 )),
         )
         .child(sparkline(m, width, HEIGHT))

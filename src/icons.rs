@@ -185,8 +185,22 @@ fn cat_tun() -> String {
 }
 
 /// The menu bar marks as SVG documents (for the hand-drawn status item).
+/// A menu bar cat as an SVG document: its head (x 3–21, y 3.4–21) and the
+/// sleeping outline's stroke fill the canvas, with no margin of the 24-point
+/// icon grid, so it fills the menu bar's 18-point icon square (NSH's tray
+/// and the speed item alike), the same in every state.
+fn status_doc(body: &str) -> String {
+    format!(
+        "<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='2.1 2.3 19.8 19.8' fill='none' stroke='#000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'>{body}</svg>"
+    )
+}
+
+fn status_uri(body: &str) -> String {
+    format!("data:image/svg+xml;utf8,{}", percent(&status_doc(body)))
+}
+
 pub fn status_svg(running: bool, tun: bool) -> String {
-    svg_doc(&match (running, tun) {
+    status_doc(&match (running, tun) {
         (false, _) => cat_sleep(),
         (true, true) => cat_tun(),
         (true, false) => cat_open(),
@@ -194,13 +208,13 @@ pub fn status_svg(running: bool, tun: bool) -> String {
 }
 
 pub fn status_run() -> String {
-    svg(&cat_open())
+    status_uri(&cat_open())
 }
 
 pub fn status_sleep() -> String {
-    svg(&cat_sleep())
+    status_uri(&cat_sleep())
 }
 
 pub fn status_tun() -> String {
-    svg(&cat_tun())
+    status_uri(&cat_tun())
 }
