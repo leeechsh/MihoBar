@@ -68,8 +68,18 @@ Numbers are `phys_footprint` (what Activity Monitor shows) for the app's own
 process; the mihomo core is a separate process in every client. Your numbers
 will vary with your profile and the number of connections.
 
+### 📈 Usage statistics, on your Mac
+
+See where your traffic goes: by **device**, **inbound user**, **host**,
+**outbound** or **process**, over the last hour, day, week or month. A chart
+of traffic over time, the top consumers, and details you can expand down to
+the proxy each connection used. MihoBar records usage itself, in a few small
+files in its data folder (kept a month by default), so the history is there
+whenever you open the Dashboard: no browser tab to keep open, nothing sent
+anywhere.
+
 <p align="center">
-  <img src="./docs/images/dashboard-connections.png" width="82%" alt="MihoBar dashboard, connections" />
+  <img src="./docs/images/dashboard-usage.png" width="92%" alt="MihoBar dashboard: usage statistics by host" />
 </p>
 
 ## 📦 Install
