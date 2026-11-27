@@ -488,7 +488,7 @@ impl Model {
             memory: signal(0),
             version: signal(String::new()),
             configs: signal(Vec::new()),
-            target: signal(ApiTarget { controller: "127.0.0.1:9097".into(), secret: None }),
+            target: signal(ApiTarget { controller: "127.0.0.1:9090".into(), secret: None }),
             logs: signal(VecDeque::new()),
             startup_error: signal(None),
             tab: signal(RootTab::Proxy),

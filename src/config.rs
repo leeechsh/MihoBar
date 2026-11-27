@@ -106,7 +106,8 @@ fn strip_comment(value: &str) -> &str {
 /// The controller address the core is launched with: the config's
 /// `external-controller`, a wildcard host made local, or the default.
 pub fn launch_controller(config_content: &str) -> String {
-    const DEFAULT: &str = "127.0.0.1:9097";
+    // mihomo's usual controller port, where dashboards and scripts look.
+    const DEFAULT: &str = "127.0.0.1:9090";
     let Some(raw) = yaml_scalar(config_content, "external-controller") else {
         return DEFAULT.into();
     };
@@ -145,6 +146,9 @@ mod tests {
         assert_eq!(yaml_scalar(doc, "secret").as_deref(), Some("abc"));
         assert_eq!(yaml_scalar(doc, "mode"), None);
         assert_eq!(launch_controller("external-controller: :9090\n"), "127.0.0.1:9090");
+        // A profile without a controller gets mihomo's usual one.
+        assert_eq!(launch_controller("mixed-port: 7897\n"), "127.0.0.1:9090");
+        assert_eq!(launch_controller("external-controller: 127.0.0.1:9097\n"), "127.0.0.1:9097");
         assert_eq!(api_host_port("0.0.0.0:9090"), "127.0.0.1:9090");
     }
 

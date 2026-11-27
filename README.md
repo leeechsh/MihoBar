@@ -135,6 +135,10 @@ anywhere.
 📁 Data lives in `~/Library/Application Support/mihobar` (profiles in
 `config/`, the core in `core/mihomo`, logs in `logs/`, usage in `usage/`).
 
+🔌 The core's controller (for dashboards and scripts) is your profile's
+`external-controller`, else `127.0.0.1:9090`; a profile without an HTTP,
+SOCKS or mixed port gets `mixed-port: 7897`.
+
 ## 🔄 Updates
 
 - **Settings → Auto Update** ticks **App** and **Core** separately.
@@ -182,8 +186,8 @@ sudo launchctl bootout system/dev.mihobar.helper; sudo rm -f /Library/LaunchDaem
 
 `scripts/test.sh` runs `nsh test` with `MIHOBAR_HOME` set to a fresh
 directory, so your data directory is never touched. Tests that start a core
-use the controller `127.0.0.1:9097` and mixed port 7897, so the script
-refuses to run while another MihoBar holds those ports. The subscription test
+use the fixture profile's controller `127.0.0.1:9097` and mixed port 7897,
+so the script refuses to run while another core holds those ports. The subscription test
 downloads `http://127.0.0.1:8765/sub.yaml`: serve a mihomo config under that
 name first, for example
 
