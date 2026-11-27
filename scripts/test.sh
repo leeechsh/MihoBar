@@ -13,4 +13,17 @@ for port in 9097 7897; do
     exit 1
   fi
 done
-MIHOBAR_HOME="$(mktemp -d)" MIHOBAR_SHOW_PANEL=1 exec nsh test "$@"
+# MihoBar ships no profile: the app's tests start from one of their own
+# (tests/fixtures); the first-launch tests (Fresh.test.tsx) from none.
+with_profile() {
+  local home; home="$(mktemp -d)"
+  mkdir -p "$home/config"
+  cp tests/fixtures/Mihobar.yaml "$home/config/"
+  MIHOBAR_HOME="$home" MIHOBAR_SHOW_PANEL=1 nsh test "$@"
+}
+if [ "$#" -gt 0 ]; then
+  with_profile "$@"
+  exit
+fi
+with_profile App.test.tsx
+MIHOBAR_HOME="$(mktemp -d)" MIHOBAR_SHOW_PANEL=1 nsh test Fresh.test.tsx

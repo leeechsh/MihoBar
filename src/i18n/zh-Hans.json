@@ -538,5 +538,8 @@
 "ui.updates.auto.app": "App",
 "ui.updates.auto.core": "内核",
 "ui.updates.auto.both": "App、内核",
-"ui.updates.auto.off": "关闭"
+"ui.updates.auto.off": "关闭",
+"ui.profile.empty.title": "还没有配置",
+"ui.profile.empty.body": "导入本地配置文件或订阅链接，即可启动内核。",
+"ui.profile.needed": "请先导入配置"
 }

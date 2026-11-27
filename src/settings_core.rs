@@ -56,6 +56,15 @@ impl RuntimeConfig {
     }
 }
 
+/// The mixed port MihoBar gives a profile that has no proxy port.
+pub const DEFAULT_MIXED_PORT: u16 = 7897;
+
+/// Whether `s` has an HTTP, SOCKS or mixed port (one the system proxy can
+/// use; redir and TProxy ports are not).
+pub fn has_proxy_port(s: &CoreSettings) -> bool {
+    ["port", "socks-port", "mixed-port"].iter().any(|k| port_value(s, k).trim().parse::<u16>().is_ok_and(|p| p > 0))
+}
+
 /// A port field's config key, label and icon.
 pub const PORT_FIELDS: [(&str, &str); 5] = [
     ("port", "ui.settings.port.port"),
@@ -288,8 +297,17 @@ impl Model {
     /// (ClashBar's `applyEditableSettingsOverlay`). TUN comes with the
     /// system proxy milestone.
     pub(crate) async fn apply_settings_overlay(&self, syncing_key: &str) {
-        let Some(overlay) = self.settings.with_untracked(|s| s.core_settings.clone()) else { return };
         let fallback = self.runtime_config.get_untracked().to_core_settings();
+        let Some(overlay) = self.settings.with_untracked(|s| s.core_settings.clone()) else {
+            // Nothing kept yet (a fresh install, a profile of the user's
+            // own): only a proxy port, when the profile has none.
+            if !has_proxy_port(&fallback) {
+                let mut body = Map::new();
+                body.insert("mixed-port".into(), json!(DEFAULT_MIXED_PORT));
+                self.patch_config(body, syncing_key, String::new()).await;
+            }
+            return;
+        };
         let level = if overlay.log_level.trim().is_empty() { fallback.log_level.clone() } else { overlay.log_level.clone() };
         if !crate::data::LOG_LEVELS.contains(&level.as_str()) {
             self.show_feedback(Feedback::Error(self.tr_args("app.settings.error.overlay_invalid_log_level", &[&level])));
@@ -300,6 +318,11 @@ impl Model {
             if port_value(&ports, key).trim().is_empty() {
                 set_port_value(&mut ports, key, port_value(&fallback, key).to_owned());
             }
+        }
+        // A profile and settings without any proxy port get one, or the
+        // system proxy would have nothing to point at.
+        if !has_proxy_port(&ports) {
+            set_port_value(&mut ports, "mixed-port", DEFAULT_MIXED_PORT.to_string());
         }
         let mut body = match port_patch(&ports, true) {
             Ok(body) => body,
@@ -463,5 +486,26 @@ impl Model {
 
     pub async fn refresh_launch_at_login(&self) {
         self.launch_at_login.set(nsh_core::element::desktop::launch_at_login().await);
+    }
+}
+
+#[cfg(test)]
+mod proxy_port_tests {
+    use super::*;
+
+    #[test]
+    fn finds_a_proxy_port() {
+        let mut s = CoreSettings::default();
+        assert!(!has_proxy_port(&s));
+        s.redir_port = "7892".into();
+        s.tproxy_port = "7893".into();
+        assert!(!has_proxy_port(&s), "redir and TProxy are no proxy ports");
+        s.socks_port = "0".into();
+        assert!(!has_proxy_port(&s));
+        s.socks_port = "2334".into();
+        assert!(has_proxy_port(&s));
+        let mut m = CoreSettings::default();
+        m.mixed_port = DEFAULT_MIXED_PORT.to_string();
+        assert!(has_proxy_port(&m));
     }
 }

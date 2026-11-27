@@ -538,5 +538,8 @@
 "ui.updates.auto.app": "App",
 "ui.updates.auto.core": "Core",
 "ui.updates.auto.both": "App, Core",
-"ui.updates.auto.off": "Off"
+"ui.updates.auto.off": "Off",
+"ui.profile.empty.title": "No profile yet",
+"ui.profile.empty.body": "Import a profile file or a subscription link to start the core.",
+"ui.profile.needed": "Import a profile first"
 }

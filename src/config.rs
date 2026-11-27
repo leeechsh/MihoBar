@@ -4,11 +4,7 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::paths::WorkingDirectory;
 
-/// The default config shipped in the app, seeded as `Mihobar.yaml`.
-pub const DEFAULT_CONFIG_NAME: &str = "Mihobar.yaml";
-pub const DEFAULT_CONFIG: &str = include_str!("../assets/config/Mihobar.yaml");
 
 /// The config files in `dir`, by name: regular files (links followed) with
 /// a `yaml` / `yml` extension, hidden ones skipped.
@@ -28,15 +24,6 @@ pub fn scan_config_files(dir: &Path) -> Vec<PathBuf> {
         .collect();
     files.sort_by(|a, b| a.file_name().cmp(&b.file_name()));
     files
-}
-
-/// Writes the default config into the config directory when missing.
-pub fn seed_default_config(wd: &WorkingDirectory) -> Result<(), String> {
-    let target = wd.config_dir().join(DEFAULT_CONFIG_NAME);
-    if target.exists() {
-        return Ok(());
-    }
-    write_config_data(DEFAULT_CONFIG.as_bytes(), &target).map(|_| ())
 }
 
 /// Writes `data` to `target` atomically; `Ok(false)` when the file already

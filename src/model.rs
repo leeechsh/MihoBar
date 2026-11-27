@@ -442,7 +442,6 @@ impl Model {
         ROOT_OWNER.with_borrow_mut(|o| *o = Some(Owner::current()));
         let wd = WorkingDirectory::default();
         let bootstrap_error = wd.bootstrap().err();
-        let seed_error = config::seed_default_config(&wd).err();
         let settings_path = wd.state_dir().join("settings.json");
         let wd_state = wd.state_dir();
         let settings = Settings::load(&settings_path);
@@ -561,9 +560,6 @@ impl Model {
         }
         if let Some(e) = bootstrap_error {
             model.log_app("error", model.tr_args("log.working_dir_init_failed", &[&e]));
-        }
-        if let Some(e) = seed_error {
-            model.log_app("error", model.tr_args("log.config.import_local.failed", &[&config::DEFAULT_CONFIG_NAME, &e]));
         }
 
         // Settings are saved as they change (by the panel's process only).
@@ -1218,6 +1214,12 @@ impl Model {
             .filter_map(|p| p.file_name().and_then(|n| n.to_str()).map(str::to_owned))
             .collect();
         self.configs.set(files);
+        // No profile ships with the app: the first one imported (or any,
+        // when the selected one is gone) becomes the selection.
+        let selected = self.settings.with_untracked(|s| s.selected_config.clone());
+        if selected.is_none_or(|name| !self.configs.with_untracked(|c| c.contains(&name))) {
+            self.restore_selected_config();
+        }
     }
 
     /// The saved selection, else the config the core last started with,

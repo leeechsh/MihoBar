@@ -83,7 +83,7 @@ use crate::model::Model;
 /// The app's UI set (`nsh.json` `"rust"`).
 #[native_module("mihobar/native")]
 fn native(registry: &mut Registry) {
-    // Ships `assets/` (the bundled mihomo core and the default config).
+    // Ships `assets/` (the bundled mihomo core and the icon).
     registry.assets(assets!());
     registry.register::<App>();
 }

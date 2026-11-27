@@ -113,7 +113,8 @@ anywhere.
 ## 🚀 Quick start
 
 1. Click the cat in the menu bar to open the panel.
-2. Pick a **Profile**, or import one: a local file or a subscription link.
+2. Import a **Profile**: a local file or a subscription link (MihoBar ships
+   none, so it starts from yours).
 3. Press **▶** to start the core.
 4. Choose a **Proxy Mode**: Rule, Global or Direct.
 5. Pick nodes in your proxy groups and test their latency, then turn on
@@ -238,8 +239,8 @@ and days past the retention period (a month by default) are deleted.
 ## 🙏 Acknowledgements
 
 - [ClashBar](https://github.com/Sitoi/ClashBar) by Sitoi, whose ideas and
-  design MihoBar draws on. MihoBar's localized strings and default config come
-  from ClashBar (v0.3.6, GPL-3.0).
+  design MihoBar draws on. MihoBar's localized strings come from ClashBar
+  (v0.3.6, GPL-3.0).
 - [MetaCubeX/mihomo](https://github.com/MetaCubeX/mihomo) for the core.
 - [NSH](https://nsh.dev), the native UI framework MihoBar is built with.
 - [metacubexd](https://github.com/MetaCubeX/metacubexd) and

@@ -125,6 +125,16 @@ pub fn proxy_tab(m: Model, win: WindowRef) -> impl IntoElement {
                     move |_: &MouseEvent| close()
                 })
                 .child(view().on_mouse_enter(close_configs_on_hover(&m)).child(traffic_overview(m.clone())))
+                .child(when(
+                    {
+                        let m = m.clone();
+                        move || m.configs.with(Vec::is_empty)
+                    },
+                    {
+                        let (m, win) = (m.clone(), win.clone());
+                        move || no_profile_card(m.clone(), win.clone())
+                    },
+                ))
                 .child(quick_rows(m.clone(), win.clone()))
                 // A failed switch (TUN, the system proxy) says why here.
                 .child(crate::ui_settings::feedback_banner(m.clone())),
@@ -329,6 +339,71 @@ fn traffic_overview(m: Model) -> impl IntoElement {
                 .justify_between()
                 .child(footnote(icons::link(), move || conn_m.tr_args("ui.overview.connections", &[&conn_m.connections_count.get()])))
                 .child(footnote(icons::memorychip(), move || format::bytes_integer(mem_m.memory.get()))),
+        )
+}
+
+/// What the node tab shows before any profile exists (MihoBar ships none):
+/// import one from a file or a subscription link.
+fn no_profile_card(m: Model, win: WindowRef) -> impl IntoElement {
+    let (local_m, remote_m) = (m.clone(), m.clone());
+    let remote_ref = element_ref();
+    widgets::card()
+        .p(px(style::SPACE8))
+        .gap(px(style::SPACE6))
+        .child(
+            view()
+                .flex_row()
+                .items_center()
+                .gap(px(10.0))
+                .child(widgets::tile(icons::doc_text(), style::purple))
+                .child(
+                    view()
+                        .flex_1()
+                        .min_w(px(0.0))
+                        .gap(px(2.0))
+                        .child(text({
+                            let m = m.clone();
+                            move || m.tr("ui.profile.empty.title")
+                        })
+                        .text_size(px(font::BODY))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(style::primary_label()))
+                        .child(text({
+                            let m = m.clone();
+                            move || m.tr("ui.profile.empty.body")
+                        })
+                        .text_size(px(font::CAPTION))
+                        .text_color(style::secondary_label())),
+                ),
+        )
+        .child(
+            view()
+                .flex_row()
+                .gap(px(style::SPACE6))
+                .child(widgets::push_button(
+                    {
+                        let m = m.clone();
+                        move || m.tr("ui.quick.import_local_config")
+                    },
+                    icons::import_file,
+                    style::info,
+                    move || {
+                        let m = local_m.clone();
+                        crate::model::run_root(async move { m.import_local_config().await });
+                    },
+                ))
+                .child(
+                    widgets::push_button(
+                        {
+                            let m = m.clone();
+                            move || m.tr("ui.quick.import_remote_config")
+                        },
+                        icons::link,
+                        style::purple,
+                        move || show_side(&remote_m, &win, remote_ref.clone(), SideKind::ImportRemote),
+                    )
+                    .element_ref(&remote_ref),
+                ),
         )
 }
 

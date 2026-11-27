@@ -246,11 +246,18 @@ fn header(m: Model) -> impl IntoElement {
             |_| style::secondary_label(),
             {
                 let m = m.clone();
-                move || m.tr(if m.is_running() { "app.primary.restart" } else { "app.primary.start" })
+                move || {
+                    if !m.is_running() && m.configs.with(Vec::is_empty) {
+                        m.tr("ui.profile.needed")
+                    } else {
+                        m.tr(if m.is_running() { "app.primary.restart" } else { "app.primary.start" })
+                    }
+                }
             },
             {
                 let m = m.clone();
-                move || m.is_processing()
+                // Nothing to start before a profile is imported.
+                move || m.is_processing() || (!m.is_running() && m.configs.with(Vec::is_empty))
             },
             move || {
                 let m = restart_m.clone();
@@ -268,11 +275,17 @@ fn header(m: Model) -> impl IntoElement {
             },
             {
                 let m = m.clone();
-                move || m.tr(if m.is_running() { "ui.action.stop" } else { "app.primary.start" })
+                move || {
+                    if !m.is_running() && m.configs.with(Vec::is_empty) {
+                        m.tr("ui.profile.needed")
+                    } else {
+                        m.tr(if m.is_running() { "ui.action.stop" } else { "app.primary.start" })
+                    }
+                }
             },
             {
                 let m = m.clone();
-                move || m.is_processing()
+                move || m.is_processing() || (!m.is_running() && m.configs.with(Vec::is_empty))
             },
             move || {
                 let m = toggle_m.clone();
